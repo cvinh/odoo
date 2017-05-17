@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 
 from odoo import fields, models, api, _
+from odoo.exceptions import ValidationError
 from datetime import timedelta
 
 
@@ -19,11 +20,11 @@ class ResCompany(models.Model):
     bank_account_code_prefix = fields.Char(string='Prefix of the bank accounts', oldname="bank_account_code_char")
     cash_account_code_prefix = fields.Char(string='Prefix of the cash accounts')
     accounts_code_digits = fields.Integer(string='Number of digits in an account code')
+    tax_cash_basis_journal_id = fields.Many2one('account.journal', string="Cash Basis Journal")
     tax_calculation_rounding_method = fields.Selection([
         ('round_per_line', 'Round per Line'),
         ('round_globally', 'Round Globally'),
-        ], default='round_per_line', string='Tax Calculation Rounding Method',
-        help="If you select 'Round per Line' : for each tax, the tax amount will first be computed and rounded for each PO/SO/invoice line and then these rounded amounts will be summed, leading to the total amount for that tax. If you select 'Round Globally': for each tax, the tax amount will be computed for each PO/SO/invoice line, then these amounts will be summed and eventually this total tax amount will be rounded. If you sell with tax included, you should choose 'Round per line' because you certainly want the sum of your tax-included line subtotals to be equal to the total amount with taxes.")
+        ], default='round_per_line', string='Tax Calculation Rounding Method')
     currency_exchange_journal_id = fields.Many2one('account.journal', string="Exchange Gain or Loss Journal", domain=[('type', '=', 'general')])
     income_currency_exchange_account_id = fields.Many2one('account.account', related='currency_exchange_journal_id.default_credit_account_id',
         string="Gain Exchange Rate Account", domain="[('internal_type', '=', 'other'), ('deprecated', '=', False), ('company_id', '=', id)]")
@@ -78,7 +79,20 @@ Best Regards,''')
             account.write({'code': account.code.rstrip('0').ljust(digits, '0')})
 
     @api.multi
+    def _validate_fiscalyear_lock(self, values):
+        if values.get('fiscalyear_lock_date'):
+            nb_draft_entries = self.env['account.move'].search([
+                ('company_id', 'in', [c.id for c in self]),
+                ('state', '=', 'draft'),
+                ('date', '<=', values['fiscalyear_lock_date'])])
+            if nb_draft_entries:
+                raise ValidationError(_('There are still unposted entries in the period you want to lock. You should either post or delete them.'))
+
+    @api.multi
     def write(self, values):
+        #restrict the closing of FY if there are still unposted entries
+        self._validate_fiscalyear_lock(values)
+
         # Reflect the change on accounts
         for company in self:
             digits = values.get('accounts_code_digits') or company.accounts_code_digits

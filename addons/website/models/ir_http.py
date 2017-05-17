@@ -14,7 +14,7 @@ import odoo
 from odoo import api, models
 from odoo import SUPERUSER_ID
 from odoo.http import request
-from odoo.tools import config
+from odoo.tools import config, pycompat
 from odoo.exceptions import QWebException
 from odoo.tools.safe_eval import safe_eval
 
@@ -23,6 +23,10 @@ from odoo.addons.website.models.website import slug, url_for, _UNSLUG_RE
 
 
 logger = logging.getLogger(__name__)
+
+# global resolver (GeoIP API is thread-safe, for multithreaded workers)
+# This avoids blowing up open files limit
+odoo._geoip_resolver = None
 
 
 class RequestUID(object):
@@ -34,7 +38,7 @@ class Http(models.AbstractModel):
     _inherit = 'ir.http'
 
     rerouting_limit = 10
-    _geoip_resolver = None
+    _geoip_resolver = None  # backwards-compatibility
 
     @classmethod
     def _get_converters(cls):
@@ -90,26 +94,31 @@ class Http(models.AbstractModel):
 
     @classmethod
     def _geoip_setup_resolver(cls):
-        if cls._geoip_resolver is None:
-            try:
-                import GeoIP
-                # updated database can be downloaded on MaxMind website
-                # http://dev.maxmind.com/geoip/legacy/install/city/
-                geofile = config.get('geoip_database')
-                if os.path.exists(geofile):
-                    cls._geoip_resolver = GeoIP.open(geofile, GeoIP.GEOIP_STANDARD)
-                else:
-                    cls._geoip_resolver = False
-                    logger.warning('GeoIP database file %r does not exists, apt-get install geoip-database-contrib or download it from http://dev.maxmind.com/geoip/legacy/install/city/', geofile)
-            except ImportError:
-                cls._geoip_resolver = False
+        # Lazy init of GeoIP resolver
+        if cls._geoip_resolver is not None:
+            return
+        if odoo._geoip_resolver is not None:
+            cls._geoip_resolver = odoo._geoip_resolver
+            return
+        try:
+            import GeoIP
+            # updated database can be downloaded on MaxMind website
+            # http://dev.maxmind.com/geoip/legacy/install/city/
+            geofile = config.get('geoip_database')
+            if os.path.exists(geofile):
+                odoo._geoip_resolver = GeoIP.open(geofile, GeoIP.GEOIP_STANDARD)
+            else:
+                odoo._geoip_resolver = False
+                logger.warning('GeoIP database file %r does not exists, apt-get install geoip-database-contrib or download it from http://dev.maxmind.com/geoip/legacy/install/city/', geofile)
+        except ImportError:
+            odoo._geoip_resolver = False
 
     @classmethod
     def _geoip_resolve(cls):
         if 'geoip' not in request.session:
             record = {}
-            if cls._geoip_resolver and request.httprequest.remote_addr:
-                record = cls._geoip_resolver.record_by_addr(request.httprequest.remote_addr) or {}
+            if odoo._geoip_resolver and request.httprequest.remote_addr:
+                record = odoo._geoip_resolver.record_by_addr(request.httprequest.remote_addr) or {}
             request.session['geoip'] = record
 
     @classmethod
@@ -187,9 +196,9 @@ class Http(models.AbstractModel):
                     if request.lang != request.website.default_lang_code:
                         path.insert(1, request.lang)
                     path = '/'.join(path) or '/'
+                    request.context = context
                     redirect = request.redirect(path + '?' + request.httprequest.query_string)
                     redirect.set_cookie('website_lang', request.lang)
-                    request.context = context
                     return redirect
                 elif url_lang:
                     request.uid = None
@@ -232,7 +241,7 @@ class Http(models.AbstractModel):
     def _postprocess_args(cls, arguments, rule):
         super(Http, cls)._postprocess_args(arguments, rule)
 
-        for key, val in arguments.items():
+        for key, val in pycompat.items(arguments):
             # Replace uid placeholder by the current request.uid
             if isinstance(val, models.BaseModel) and isinstance(val._uid, RequestUID):
                 arguments[key] = val.sudo(request.uid)
@@ -240,7 +249,7 @@ class Http(models.AbstractModel):
         try:
             _, path = rule.build(arguments)
             assert path is not None
-        except Exception, e:
+        except Exception as e:
             return cls._handle_exception(e, code=404)
 
         if getattr(request, 'website_multilang', False) and request.httprequest.method in ('GET', 'HEAD'):
@@ -267,7 +276,7 @@ class Http(models.AbstractModel):
                 else:
                     # if parent excplicitely returns a plain response, then we don't touch it
                     return response
-            except Exception, e:
+            except Exception as e:
                 if 'werkzeug' in config['dev_mode'] and (not isinstance(exception, QWebException) or not exception.qweb.get('cause')):
                     raise
                 exception = e
@@ -352,8 +361,8 @@ class ModelConverter(ir.ir_http.ModelConverter):
                 record_id = abs(record_id)
         return env[self.model].browse(record_id)
 
-    def generate(self, query=None, args=None):
-        Model = request.env[self.model]
+    def generate(self, uid, query=None, args=None):
+        Model = request.env[self.model].sudo(uid)
         domain = safe_eval(self.domain, (args or {}).copy())
         if query:
             domain.append((Model._rec_name, 'ilike', '%' + query + '%'))
@@ -365,12 +374,14 @@ class ModelConverter(ir.ir_http.ModelConverter):
 class PageConverter(werkzeug.routing.PathConverter):
     """ Only point of this converter is to bundle pages enumeration logic """
 
-    def generate(self, query=None, args={}):
-        View = request.env['ir.ui.view']
+    def generate(self, uid, query=None, args={}):
+        View = request.env['ir.ui.view'].sudo(uid)
         domain = [('page', '=', True)]
         query = query and query.startswith('website.') and query[8:] or query
         if query:
             domain += [('key', 'like', query)]
+        website = request.env['website'].get_current_website()
+        domain += ['|', ('website_id', '=', website.id), ('website_id', '=', False)]
 
         views = View.search_read(domain, fields=['key', 'priority', 'write_date'], order='name')
         for view in views:

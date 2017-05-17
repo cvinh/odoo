@@ -13,10 +13,16 @@ class AccountInvoiceLine(models.Model):
 
         # Get paid invoices
         purchases = self.sudo().search_read(
-            domain=[('invoice_id.state', '=', 'paid'), ('invoice_id.partner_id', '=', partner.id), ('product_id.product_tmpl_id.type', '=', 'digital')],
+            domain=[('invoice_id.state', '=', 'paid'), ('invoice_id.partner_id', '=', partner.id)],
+            fields=['product_id'],
+        )
+
+        # Get free products
+        purchases += self.env['sale.order.line'].sudo().search_read(
+            domain=[('price_subtotal', '=', 0.0), ('order_id.partner_id', '=', partner.id)],
             fields=['product_id'],
         )
 
         # I only want product_ids, but search_read insists in giving me a list of
         # (product_id: <id>, name: <product code> <template_name> <attributes>)
-        return map(lambda x: x['product_id'][0], purchases)
+        return purchases.mapped('product_id').ids

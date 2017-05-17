@@ -27,7 +27,7 @@
                             </a>
                         </td>
                         <td class="o_main" title="To Activities">
-                            <a href="#" class="o_dashboard_action" name="crm.crm_lead_action_activities" data-context="{'search_default_today':'1'}">
+                            <a href="#" class="o_dashboard_action" name="crm.crm_lead_action_activities" data-context="{'search_default_activities_today':'1'}">
                                 <span class="o_highlight">
                                     <t t-if="!show_demo">
                                         <t t-esc="values['activity']['today']"/>
@@ -59,7 +59,7 @@
                             </a>
                         </td>
                         <td class="o_main" title="To Activities">
-                            <a href="#" class="o_dashboard_action" name="crm.crm_lead_action_activities" data-context="{'search_default_this_week':'1'}">
+                            <a href="#" class="o_dashboard_action" name="crm.crm_lead_action_activities" data-context="{'search_default_activities_week':'1'}">
                                 <t t-if="!show_demo">
                                     <t t-esc="values['activity']['next_7_days']"/>
                                 </t>
@@ -74,7 +74,7 @@
                         <td></td>
                         <!-- Hide overdue when there is none -->
                         <td t-if="show_demo or (values and values['activity']['overdue'] != 0)" class="o_warning" title="To Activities">
-                            <a href="#" class="o_dashboard_action" name="crm.crm_lead_action_activities" data-context="{'search_default_overdue':'1'}">
+                            <a href="#" class="o_dashboard_action" name="crm.crm_lead_action_activities" data-context="{'search_default_activities_overdue':'1'}">
                                 <t t-if="!show_demo">
                                     <t t-esc="values['activity']['overdue']"/> overdue
                                 </t>
@@ -84,7 +84,7 @@
                             </a>
                         </td>
                         <td  t-if="show_demo or (values and values['closing']['overdue'] != 0)" class="o_warning" title="To Opportunities">
-                            <a href="#" class="o_dashboard_action" name="crm.action_your_pipeline" data-context="{'search_default_overdue':'1'}">
+                            <a href="#" class="o_dashboard_action" name="crm.crm_lead_action_activities" data-context="{'search_default_overdue_opp':'1'}">
                                 <t t-if="!show_demo">
                                     <t t-esc="values['closing']['overdue']"/> exp. closing
                                 </t>
@@ -120,7 +120,7 @@
                                 data-context="{'search_default_won':'1', 'search_default_this_month': '1'}">
                                 <span class="o_highlight">
                                     <t t-if="!show_demo">
-                                        <t t-esc="widget.render_monetary_field(values['won']['this_month'], values['currency_id'])"/>
+                                        <t t-esc="widget._renderMonetaryField(values['won']['this_month'], values)"/>
                                     </t>
                                     <t t-if="show_demo">
                                         78,140.03€
@@ -134,7 +134,7 @@
                                 data-context="{'search_default_my_invoice':'1', 'search_default_this_month': '1'}">
                                 <span class="o_highlight">
                                     <t t-if="!show_demo">
-                                        <t t-esc="widget.render_monetary_field(values['invoiced']['this_month'], values['currency_id'])"/>
+                                        <t t-esc="widget._renderMonetaryField(values['invoiced']['this_month'], values)"/>
                                     </t>
                                     <t t-if="show_demo">
                                         35,029.39€
@@ -196,13 +196,13 @@
                         <td class="o_secondary" title="To Opportunity Report">
                             <a href="#" class="o_dashboard_action" name="crm.crm_opportunity_report_action_graph"
                                 data-context="{'search_default_won':'1', 'search_default_last_month':'1'}">
-                                <t t-esc="widget.render_monetary_field(values['won']['last_month'], values['currency_id'])"/>
+                                <t t-esc="widget._renderMonetaryField(values['won']['last_month'], values)"/>
                             </a>
                         </td>
                         <td t-if="values['invoiced']" class="o_secondary" title="To Invoice Report">
                             <a href="#" class="o_dashboard_action" name="account.action_account_invoice_report_all"
                                  data-context="{'search_default_my_invoice':'1', 'search_default_last_month': '1'}">
-                                <t t-esc="widget.render_monetary_field(values['invoiced']['last_month'], values['currency_id'])"/>
+                                <t t-esc="widget._renderMonetaryField(values['invoiced']['last_month'], values)"/>
                             </a>
                         </td>
                     </tr>

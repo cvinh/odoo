@@ -26,7 +26,7 @@ class MrpBomCost(models.AbstractModel):
                                 'attributes': attributes}
                 total = 0.0
                 for bom_line, line_data in result2:
-                    price_uom = bom_line.product_uom_id._compute_quantity(bom_line.product_id.standard_price, bom_line.product_uom_id)
+                    price_uom = bom_line.product_id.uom_id._compute_price(bom_line.product_id.standard_price, bom_line.product_uom_id)
                     line = {
                         'product_id': bom_line.product_id,
                         'product_uom_qty': line_data['qty'], #line_data needed for phantom bom explosion
@@ -41,7 +41,7 @@ class MrpBomCost(models.AbstractModel):
         return product_lines
 
     @api.model
-    def render_html(self, docids, data=None):
+    def get_report_values(self, docids, data=None):
         boms = self.env['mrp.bom'].browse(docids)
         res = self.get_lines(boms)
-        return self.env['report'].render('mrp.mrp_bom_cost_report', {'lines': res})
+        return self.env['ir.actions.report'].render_template('mrp.mrp_bom_cost_report', {'lines': res})

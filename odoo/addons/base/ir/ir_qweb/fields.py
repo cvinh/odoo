@@ -1,11 +1,11 @@
 # -*- coding: utf-8 -*-
 import re
 from collections import OrderedDict
+from io import BytesIO
 from odoo import api, fields, models, _
 from PIL import Image
-from cStringIO import StringIO
 import babel
-from odoo.tools import html_escape as escape, posix_to_ldml, safe_eval, float_utils
+from odoo.tools import html_escape as escape, posix_to_ldml, safe_eval, float_utils, format_date
 from .qweb import unicodifier
 
 import logging
@@ -94,9 +94,12 @@ class FieldConverter(models.AbstractModel):
     def record_to_html(self, record, field_name, options):
         """ record_to_html(record, field_name, options)
 
-        Converts the specified field of the browse_record ``record`` to HTML
+        Converts the specified field of the ``record`` to HTML
+
         :rtype: unicode
         """
+        if not record:
+            return False
         value = record[field_name]
         return False if value is False else record.env[self._name].value_to_html(value, options=options)
 
@@ -108,7 +111,7 @@ class FieldConverter(models.AbstractModel):
         in the user's context. Fallbacks to en_US if no lang is present in the
         context *or the language code is not valid*.
 
-        :returns: res.lang browse_record
+        :returns: Model[res.lang]
         """
         lang_code = self._context.get('lang') or 'en_US'
         return self.env['res.lang']._lang_get(lang_code)
@@ -120,7 +123,7 @@ class IntegerConverter(models.AbstractModel):
 
     @api.model
     def value_to_html(self, value, options):
-        return unicodifier(self.user_lang().format('%d', value, grouping=True))
+        return unicodifier(self.user_lang().format('%d', value, grouping=True).replace(r'-', u'\u2011'))
 
 
 class FloatConverter(models.AbstractModel):
@@ -140,7 +143,7 @@ class FloatConverter(models.AbstractModel):
             value = float_utils.float_round(value, precision_digits=precision)
             fmt = '%.{precision}f'.format(precision=precision)
 
-        formatted = self.user_lang().format(fmt, value, grouping=True)
+        formatted = self.user_lang().format(fmt, value, grouping=True).replace(r'-', u'\u2011')
 
         # %f does not strip trailing zeroes. %g does but its precision causes
         # it to switch to scientific notation starting at a million *and* to
@@ -165,21 +168,7 @@ class DateConverter(models.AbstractModel):
 
     @api.model
     def value_to_html(self, value, options):
-        if not value or len(value) < 10:
-            return ''
-        lang = self.user_lang()
-        locale = babel.Locale.parse(lang.code)
-
-        if isinstance(value, basestring):
-            value = fields.Datetime.from_string(value[:10])
-
-        if options and 'format' in options:
-            pattern = options['format']
-        else:
-            strftime_pattern = lang.date_format
-            pattern = posix_to_ldml(strftime_pattern, locale=locale)
-
-        return babel.dates.format_date(value, format=pattern, locale=locale)
+        return format_date(self.env, value, date_format=(options or {}).get('format'))
 
 
 class DateTimeConverter(models.AbstractModel):
@@ -201,7 +190,11 @@ class DateTimeConverter(models.AbstractModel):
         if options and 'format' in options:
             pattern = options['format']
         else:
-            strftime_pattern = (u"%s %s" % (lang.date_format, lang.time_format))
+            if options and options.get('time_only'):
+                strftime_pattern = (u"%s" % (lang.time_format))
+            else:
+                strftime_pattern = (u"%s %s" % (lang.date_format, lang.time_format))
+
             pattern = posix_to_ldml(strftime_pattern, locale=locale)
 
         if options and options.get('hide_seconds'):
@@ -277,7 +270,7 @@ class ImageConverter(models.AbstractModel):
     @api.model
     def value_to_html(self, value, options):
         try:
-            image = Image.open(StringIO(value.decode('base64')))
+            image = Image.open(BytesIO(value.decode('base64')))
             image.verify()
         except IOError:
             raise ValueError("Non-image binary fields can not be converted to HTML")
@@ -320,7 +313,7 @@ class MonetaryConverter(models.AbstractModel):
 
         lang = self.user_lang()
         formatted_amount = lang.format(fmt, display_currency.round(value),
-                                grouping=True, monetary=True).replace(r' ', u'\N{NO-BREAK SPACE}')
+                                grouping=True, monetary=True).replace(r' ', u'\N{NO-BREAK SPACE}').replace(r'-', u'\u2011')
 
         pre = post = u''
         if display_currency.position == 'before':
@@ -338,7 +331,7 @@ class MonetaryConverter(models.AbstractModel):
         if not options.get('display_currency') and field.type == 'monetary' and field.currency_field:
             options['display_currency'] = record[field.currency_field]
 
-        return self.value_to_html(record[field_name], options)
+        return super(MonetaryConverter, self).record_to_html(record, field_name, options)
 
 TIMEDELTA_UNITS = (
     ('year',   3600 * 24 * 365),
@@ -418,6 +411,28 @@ class RelativeDatetimeConverter(models.AbstractModel):
         if 'now' not in options:
             options = dict(options, now=record._fields[field_name].now())
         return super(RelativeDatetimeConverter, self).record_to_html(record, field_name, options)
+
+
+class BarcodeConverter(models.AbstractModel):
+    """ ``barcode`` widget rendering, inserts a data:uri-using image tag in the
+    document. May be overridden by e.g. the website module to generate links
+    instead.
+    """
+    _name = 'ir.qweb.field.barcode'
+    _inherit = 'ir.qweb.field'
+
+    @api.model
+    def value_to_html(self, value, options=None):
+        barcode_type = options.get('type', 'Code128')
+        barcode = self.env['ir.actions.report'].barcode(
+            barcode_type,
+            value,
+            **dict((key, value) for key, value in options.items() if key in ['width', 'height', 'humanreadable']))
+        return unicodifier('<img src="data:%s;base64,%s">' % ('png', barcode.encode('base64')))
+
+    @api.model
+    def from_html(self, model, field, element):
+        return None
 
 
 class Contact(models.AbstractModel):

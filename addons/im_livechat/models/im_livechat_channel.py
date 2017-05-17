@@ -6,6 +6,7 @@ import re
 from datetime import datetime, timedelta
 
 from odoo import api, fields, models, modules, tools
+from odoo.tools import pycompat
 
 
 class ImLivechatChannel(models.Model):
@@ -95,7 +96,7 @@ class ImLivechatChannel(models.Model):
         for record in self:
             dt = fields.Datetime.to_string(datetime.utcnow() - timedelta(days=7))
             repartition = record.channel_ids.rating_get_grades([('create_date', '>=', dt)])
-            total = sum(repartition.values())
+            total = sum(pycompat.values(repartition))
             if total > 0:
                 happy = repartition['great']
                 record.rating_percentage_satisfaction = ((happy*100) / total) if happy > 0 else 0
@@ -166,7 +167,7 @@ class ImLivechatChannel(models.Model):
         operator_partner_id = user.partner_id.id
         # partner to add to the mail.channel
         channel_partner_to_add = [(4, operator_partner_id)]
-        if self.env.uid:  # if the user if logged (portal user), he can be identify
+        if self.env.user and self.env.user.active:  # valid session user (not public)
             channel_partner_to_add.append((4, self.env.user.partner_id.id))
         # create the session, and add the link with the given channel
         mail_channel = self.env["mail.channel"].with_context(mail_create_nosubscribe=False).sudo().create({
@@ -195,7 +196,7 @@ class ImLivechatChannel(models.Model):
     def get_livechat_info(self, channel_id, username='Visitor'):
         info = {}
         info['available'] = len(self.browse(channel_id).get_available_users()) > 0
-        info['server_url'] = self.env['ir.config_parameter'].get_param('web.base.url')
+        info['server_url'] = self.env['ir.config_parameter'].sudo().get_param('web.base.url')
         if info['available']:
             info['options'] = self.sudo().get_channel_infos(channel_id)
             info['options']["default_username"] = username

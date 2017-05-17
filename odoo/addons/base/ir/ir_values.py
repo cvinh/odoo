@@ -1,13 +1,14 @@
 # -*- coding: utf-8 -*-
 # Part of Odoo. See LICENSE file for full copyright and licensing details.
 
-from odoo import api, fields, models, tools, _
-from odoo.exceptions import AccessError, MissingError
-from odoo.tools import pickle
+from ast import literal_eval
 
-EXCLUDED_FIELDS = set((
-    'report_sxw_content', 'report_rml_content', 'report_sxw', 'report_rml',
-    'report_sxw_content_data', 'report_rml_content_data', 'search_view', ))
+from odoo import api, fields, models, tools, _
+from odoo.exceptions import AccessError, MissingError, ValidationError
+from odoo.tools import pickle, pycompat
+
+import logging
+_logger = logging.getLogger(__name__)
 
 #: Possible slots to bind an action to with :meth:`~.set_action`
 ACTION_SLOTS = [
@@ -132,6 +133,12 @@ class IrValues(models.Model):
         context.pop(self.CONCURRENCY_CHECK_FIELD, None)
         for record in self.with_context(context):
             value = record.value_unpickle
+            # Only char-like fields should be written directly. Other types should be converted to
+            # their appropriate type first.
+            if record.model in self.env and record.name in self.env[record.model]._fields:
+                field = self.env[record.model]._fields[record.name]
+                if field.type not in ['char', 'text', 'html', 'selection']:
+                    value = literal_eval(value)
             if record.key == 'default':
                 value = pickle.dumps(value)
             record.value = value
@@ -149,9 +156,8 @@ class IrValues(models.Model):
     @api.model_cr_context
     def _auto_init(self):
         res = super(IrValues, self)._auto_init()
-        self._cr.execute("SELECT indexname FROM pg_indexes WHERE indexname = 'ir_values_key_model_key2_res_id_user_id_idx'")
-        if not self._cr.fetchone():
-            self._cr.execute("CREATE INDEX ir_values_key_model_key2_res_id_user_id_idx ON ir_values (key, model, key2, res_id, user_id)")
+        tools.create_index(self._cr, 'ir_values_key_model_key2_res_id_user_id_idx',
+                           self._table, ['key', 'model', 'key2', 'res_id', 'user_id'])
         return res
 
     @api.model
@@ -210,6 +216,15 @@ class IrValues(models.Model):
         if company_id is True:
             # should be company-specific, need to get company id
             company_id = self.env.user.company_id.id
+
+        # check consistency of model, field_name and value
+        try:
+            field = self.env[model]._fields[field_name]
+            field.convert_to_cache(value, self.browse())
+        except KeyError:
+            _logger.warning("Invalid field %s.%s", model, field_name)
+        except Exception:
+            raise ValidationError(_("Invalid value for %s.%s: %s") % (model, field_name, value))
 
         # remove existing defaults for the same scope
         search_criteria = [
@@ -286,7 +301,7 @@ class IrValues(models.Model):
                              v.company_id = (SELECT company_id FROM res_users WHERE id = %%s)
                             )
                     %s
-                    ORDER BY v.user_id, u.company_id"""
+                    ORDER BY v.user_id, v.company_id, v.id"""
         params = ('default', model, self._uid, self._uid)
         if condition:
             query = query % 'AND v.key2 = %s'
@@ -300,7 +315,7 @@ class IrValues(models.Model):
         for row in self._cr.dictfetchall():
             value = pickle.loads(row['value'].encode('utf-8'))
             defaults.setdefault(row['name'], (row['id'], row['name'], value))
-        return defaults.values()
+        return list(pycompat.values(defaults))
 
     # use ormcache: this is called a lot by BaseModel.default_get()!
     @api.model
@@ -399,14 +414,10 @@ class IrValues(models.Model):
         # process values and their action
         results = {}
         for id, name, action in actions:
-            fields = [field for field in action._fields if field not in EXCLUDED_FIELDS]
             # FIXME: needs cleanup
             try:
-                action_def = {
-                    field: action._fields[field].convert_to_read(action[field], action)
-                    for field in fields
-                }
-                if action._name in ('ir.actions.report.xml', 'ir.actions.act_window'):
+                action_def = dict([(k, v.convert_to_read(action[k], action)) for k, v in action._fields.items()])
+                if action._name in ('ir.actions.report', 'ir.actions.act_window'):
                     if action.groups_id and not action.groups_id & self.env.user.groups_id:
                         if name == 'Menuitem':
                             raise AccessError(_('You do not have the permission to perform this operation!!!'))
@@ -415,4 +426,4 @@ class IrValues(models.Model):
                 results[name] = (id, name, action_def)
             except (AccessError, MissingError):
                 continue
-        return sorted(results.values())
+        return sorted(pycompat.values(results))

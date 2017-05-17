@@ -4,10 +4,10 @@ odoo.define('pos_restaurant.multiprint', function (require) {
 var models = require('point_of_sale.models');
 var screens = require('point_of_sale.screens');
 var core = require('web.core');
+var mixins = require('web.mixins');
 var Session = require('web.Session');
 
 var QWeb = core.qweb;
-var mixins = core.mixins;
 
 var Printer = core.Class.extend(mixins.PropertiesMixin,{
     init: function(parent,options){
@@ -54,7 +54,14 @@ models.load_models({
 
         for(var i = 0; i < printers.length; i++){
             if(active_printers[printers[i].id]){
-                var printer = new Printer(self,{url:'http://'+printers[i].proxy_ip+':8069'});
+                var url = printers[i].proxy_ip;
+                if(url.indexOf('//') < 0){
+                    url = 'http://'+url;
+                }
+                if(url.indexOf(':',url.indexOf('//')+2) < 0){
+                    url = url+':8069';
+                }
+                var printer = new Printer(self,{url:url});
                 printer.config = printers[i];
                 self.printers.push(printer);
 

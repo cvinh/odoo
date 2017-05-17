@@ -1,22 +1,28 @@
 # -*- coding: utf-8 -*-
 # Part of Odoo. See LICENSE file for full copyright and licensing details.
 
-from odoo import api, exceptions, models
+from odoo import api, exceptions, fields, models
 
 
 class SaleOrder(models.Model):
 
     _inherit = 'sale.order'
 
+    website_url = fields.Char('Website URL', compute='_website_url', help='The full URL to access the document through the website.')
+
+    def _website_url(self):
+        for so in self:
+            so.website_url = '/my/orders/%s' % (so.id)
+
     @api.multi
     def get_access_action(self):
         """ Instead of the classic form view, redirect to the online quote for
         portal users that have access to a confirmed order. """
-        # TDE note: read access on sale order to portal users granted to followed sale orders
+        # TDE note: read access on sales order to portal users granted to followed sales orders
         self.ensure_one()
         if self.state == 'cancel' or (self.state == 'draft' and not self.env.context.get('mark_so_as_sent')):
             return super(SaleOrder, self).get_access_action()
-        if self.env.user.share:
+        if self.env.user.share or self.env.context.get('force_website'):
             try:
                 self.check_access_rule('read')
             except exceptions.AccessError:
@@ -55,3 +61,11 @@ class SaleOrder(models.Model):
             action='/mail/view',
             model=self._name,
             res_id=self.id)[self.partner_id.id]
+
+
+class SaleOrderLine(models.Model):
+
+    _inherit = 'sale.order.line'
+
+    # Non-stored related field to allow portal user to see the image of the product he has ordered
+    product_image = fields.Binary('Product Image', related="product_id.image", store=False)

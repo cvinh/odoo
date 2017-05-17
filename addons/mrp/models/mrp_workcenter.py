@@ -5,14 +5,21 @@ from dateutil import relativedelta
 import datetime
 
 from odoo import api, exceptions, fields, models, _
+from odoo.tools import pycompat
 
 
 class MrpWorkcenter(models.Model):
     _name = 'mrp.workcenter'
     _description = 'Work Center'
-    _inherits = {'resource.resource': 'resource_id'}
     _order = "sequence, id"
+    _inherit = ['resource.mixin']
 
+    # resource
+    name = fields.Char(related='resource_id.name', store=True)
+    time_efficiency = fields.Float('Time Efficiency', related='resource_id.time_efficiency', store=True)
+    active = fields.Boolean('Active', related='resource_id.active', default=True, store=True)
+
+    code = fields.Char('Code', copy=False)
     note = fields.Text(
         'Description',
         help="Description of the Work Center.")
@@ -25,9 +32,7 @@ class MrpWorkcenter(models.Model):
     color = fields.Integer('Color')
     time_start = fields.Float('Time before prod.', help="Time in minutes for the setup.")
     time_stop = fields.Float('Time after prod.', help="Time in minutes for the cleaning.")
-    resource_id = fields.Many2one('resource.resource', 'Resource', ondelete='cascade', required=True)
     routing_line_ids = fields.One2many('mrp.routing.workcenter', 'workcenter_id', "Routing Lines")
-
     order_ids = fields.One2many('mrp.workorder', 'workcenter_id', "Orders")
     workorder_count = fields.Integer('# Work Orders', compute='_compute_workorder_count')
     workorder_ready_count = fields.Integer('# Read Work Orders', compute='_compute_workorder_count')
@@ -69,7 +74,7 @@ class MrpWorkcenter(models.Model):
             if res_group['state'] in ('pending', 'ready', 'progress'):
                 result_duration_expected[res_group['workcenter_id'][0]] += res_group['duration_expected']
         for workcenter in self:
-            workcenter.workorder_count = sum(count for state, count in result[workcenter.id].items() if state not in ('done', 'cancel'))
+            workcenter.workorder_count = sum(count for state, count in pycompat.items(result[workcenter.id]) if state not in ('done', 'cancel'))
             workcenter.workorder_pending_count = result[workcenter.id].get('pending', 0)
             workcenter.workcenter_load = result_duration_expected[workcenter.id]
             workcenter.workorder_ready_count = result[workcenter.id].get('ready', 0)
@@ -80,12 +85,21 @@ class MrpWorkcenter(models.Model):
     @api.depends('time_ids', 'time_ids.date_end', 'time_ids.loss_type')
     def _compute_working_state(self):
         for workcenter in self:
-            time_log = self.env['mrp.workcenter.productivity'].search([('workcenter_id', '=', workcenter.id)], limit=1)
-            if not time_log or time_log.date_end:
+            # We search for a productivity line associated to this workcenter having no `date_end`.
+            # If we do not find one, the workcenter is not currently being used. If we find one, according
+            # to its `type_loss`, the workcenter is either being used or blocked.
+            time_log = self.env['mrp.workcenter.productivity'].search([
+                ('workcenter_id', '=', workcenter.id),
+                ('date_end', '=', False)
+            ], limit=1)
+            if not time_log:
+                # the workcenter is not being used
                 workcenter.working_state = 'normal'
             elif time_log.loss_type in ('productive', 'performance'):
+                # the productivity line has a `loss_type` that means the workcenter is being used
                 workcenter.working_state = 'done'
             else:
+                # the workcenter is blocked
                 workcenter.working_state = 'blocked'
 
     @api.multi
@@ -193,8 +207,14 @@ class MrpWorkcenterProductivity(models.Model):
     def _compute_duration(self):
         for blocktime in self:
             if blocktime.date_end:
-                diff = fields.Datetime.from_string(blocktime.date_end) - fields.Datetime.from_string(blocktime.date_start)
-                blocktime.duration = round(diff.total_seconds() / 60.0, 2)
+                d1 = fields.Datetime.from_string(blocktime.date_start)
+                d2 = fields.Datetime.from_string(blocktime.date_end)
+                diff = d2 - d1
+                if (blocktime.loss_type not in ('productive', 'performance')) and blocktime.workcenter_id.resource_calendar_id:
+                    r = blocktime.workcenter_id.resource_calendar_id.get_work_hours_count(d1, d2, blocktime.workcenter_id.resource_id.id)
+                    blocktime.duration = round(r * 60, 2)
+                else:
+                    blocktime.duration = round(diff.total_seconds() / 60.0, 2)
             else:
                 blocktime.duration = 0.0
 

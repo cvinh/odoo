@@ -30,32 +30,41 @@ class SaleOrderLine(models.Model):
     @api.multi
     def _get_delivered_qty(self):
         self.ensure_one()
-        precision = self.env['decimal.precision'].precision_get('Product Unit of Measure')
 
-        # In the case of a kit, we need to check if all components are shipped. We use a all or
-        # nothing policy. A product can have several BoMs, we don't know which one was used when the
-        # delivery was created.
-        bom_delivered = {}
+        # In the case of a kit, we need to check if all components are shipped. Since the BOM might
+        # have changed, we don't compute the quantities but verify the move state.
         bom = self.env['mrp.bom']._bom_find(product=self.product_id)
         if bom and bom.type == 'phantom':
-            bom_delivered[bom.id] = False
-            product_uom_qty_bom = self.product_uom._compute_quantity(self.product_uom_qty, bom.product_uom_id) / bom.product_qty
-            boms, lines = bom.explode(self.product_id, product_uom_qty_bom)
-            for bom_line, data in lines:
-                qty = 0.0
-                for move in self.procurement_ids.mapped('move_ids'):
-                    if move.state == 'done' and move.product_id.id == bom_line.product_id.id:
-                        qty += move.product_uom._compute_quantity(move.product_uom_qty, bom_line.product_uom_id)
-                if float_compare(qty, data['qty'], precision_digits=precision) < 0:
-                    bom_delivered[bom.id] = False
-                    break
-                else:
-                    bom_delivered[bom.id] = True
-        if bom_delivered and any(bom_delivered.values()):
-            return self.product_uom_qty
-        elif bom_delivered:
-            return 0.0
+            bom_delivered = all([move.state == 'done' for move in self.procurement_ids.mapped('move_ids')])
+            if bom_delivered:
+                return self.product_uom_qty
+            else:
+                return 0.0
         return super(SaleOrderLine, self)._get_delivered_qty()
+
+    @api.multi
+    def _get_bom_component_qty(self, bom):
+        bom_quantity = self.product_uom._compute_quantity(self.product_uom_qty, bom.product_uom_id)
+        boms, lines = bom.explode(self.product_id, bom_quantity)
+        components = {}
+        for line, line_data in lines:
+            product = line.product_id.id
+            uom = line.product_uom_id
+            qty = line.product_qty
+            if components.get(product, False):
+                if uom.id != components[product]['uom']:
+                    from_uom = uom
+                    to_uom = self.env['product.uom'].browse(components[product]['uom'])
+                    qty = from_uom._compute_quantity(qty, to_uom_id=to_uom)
+                components[product]['qty'] += qty
+            else:
+                # To be in the uom reference of the product
+                to_uom = self.env['product.product'].browse(product).uom_id
+                if uom.id != to_uom.id:
+                    from_uom = uom
+                    qty = from_uom._compute_quantity(qty, to_uom_id=to_uom)
+                components[product] = {'qty': qty, 'uom': to_uom.id}
+        return components
 
 
 class AccountInvoiceLine(models.Model):
@@ -83,12 +92,12 @@ class AccountInvoiceLine(models.Model):
                 if bom.type == 'phantom':
                     average_price_unit = 0
                     components = s_line._get_bom_component_qty(bom)
-                    for product_id in components.keys():
+                    for product_id in components:
                         factor = components[product_id]['qty']
                         prod_moves = [m for m in moves if m.product_id.id == product_id]
                         prod_qty_done = factor * qty_done
                         prod_quantity = factor * quantity
                         average_price_unit += self._compute_average_price(prod_qty_done, prod_quantity, prod_moves)
                     price_unit = average_price_unit or price_unit
-                    price_unit = self.uom_id._compute_quantity(price_unit, self.product_id.uom_id, round=False)
+                    price_unit = self.product_id.uom_id._compute_price(price_unit, self.uom_id)
         return price_unit

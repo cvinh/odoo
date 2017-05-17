@@ -5,15 +5,13 @@ from odoo import http, _
 from odoo.exceptions import AccessError
 from odoo.http import request
 
-from odoo.addons.website_portal.controllers.main import website_account
+from odoo.addons.website_portal.controllers.main import website_account, get_records_pager
 
 
 class website_account(website_account):
 
-    @http.route()
-    def account(self, **kw):
-        """ Add sales documents to main account page """
-        response = super(website_account, self).account(**kw)
+    def _prepare_portal_layout_values(self):
+        values = super(website_account, self)._prepare_portal_layout_values()
         partner = request.env.user.partner_id
 
         SaleOrder = request.env['sale.order']
@@ -27,19 +25,20 @@ class website_account(website_account):
             ('state', 'in', ['sale', 'done'])
         ])
         invoice_count = Invoice.search_count([
+            ('type', 'in', ['out_invoice', 'out_refund']),
             ('message_partner_ids', 'child_of', [partner.commercial_partner_id.id]),
-            ('state', 'in', ['open', 'paid', 'cancelled'])
+            ('state', 'in', ['open', 'paid', 'cancel'])
         ])
 
-        response.qcontext.update({
+        values.update({
             'quotation_count': quotation_count,
             'order_count': order_count,
             'invoice_count': invoice_count,
         })
-        return response
+        return values
 
     #
-    # Quotations and Sale Orders
+    # Quotations and Sales Orders
     #
 
     @http.route(['/my/quotes', '/my/quotes/page/<int:page>'], type='http', auth="user", website=True)
@@ -55,7 +54,7 @@ class website_account(website_account):
 
         searchbar_sortings = {
             'date': {'label': _('Order Date'), 'order': 'date_order desc'},
-            'name': {'label': _('Name'), 'order': 'name'},
+            'name': {'label': _('Reference'), 'order': 'name'},
         }
 
         # default sortby order
@@ -79,10 +78,11 @@ class website_account(website_account):
         )
         # search the count to display, according to the pager data
         quotations = SaleOrder.search(domain, order=sort_order, limit=self._items_per_page, offset=pager['offset'])
+        request.session['my_quotes_history'] = quotations.ids[:100]
 
         values.update({
             'date': date_begin,
-            'quotations': quotations,
+            'quotations': quotations.sudo(),
             'page_name': 'quote',
             'pager': pager,
             'archive_groups': archive_groups,
@@ -105,7 +105,7 @@ class website_account(website_account):
 
         searchbar_sortings = {
             'date': {'label': _('Order Date'), 'order': 'date_order desc'},
-            'name': {'label': _('Name'), 'order': 'name'},
+            'name': {'label': _('Reference'), 'order': 'name'},
         }
         # default sortby order
         if not sortby:
@@ -128,10 +128,11 @@ class website_account(website_account):
         )
         # content according to pager and archive selected
         orders = SaleOrder.search(domain, order=sort_order, limit=self._items_per_page, offset=pager['offset'])
+        request.session['my_orders_history'] = orders.ids[:100]
 
         values.update({
             'date': date_begin,
-            'orders': orders,
+            'orders': orders.sudo(),
             'page_name': 'order',
             'pager': pager,
             'archive_groups': archive_groups,
@@ -150,10 +151,14 @@ class website_account(website_account):
         except AccessError:
             return request.render("website.403")
         order_invoice_lines = {il.product_id.id: il.invoice_id for il in order.invoice_ids.mapped('invoice_line_ids')}
-        return request.render("website_portal_sale.orders_followup", {
+        history = request.session.get('my_orders_history', [])
+
+        values = {
             'order': order.sudo(),
             'order_invoice_lines': order_invoice_lines,
-        })
+        }
+        values.update(get_records_pager(history, order))
+        return request.render("website_portal_sale.orders_followup", values)
 
     #
     # Invoices
@@ -166,6 +171,7 @@ class website_account(website_account):
         AccountInvoice = request.env['account.invoice']
 
         domain = [
+            ('type', 'in', ['out_invoice', 'out_refund']),
             ('message_partner_ids', 'child_of', [partner.commercial_partner_id.id]),
             ('state', 'in', ['open', 'paid', 'cancelled'])
         ]
@@ -173,7 +179,7 @@ class website_account(website_account):
         searchbar_sortings = {
             'date': {'label': _('Invoice Date'), 'order': 'date_invoice desc'},
             'duedate': {'label': _('Due Date'), 'order': 'date_due desc'},
-            'name': {'label': _('Name'), 'order': 'name desc'},
+            'name': {'label': _('Reference'), 'order': 'name desc'},
             'state': {'label': _('Status'), 'order': 'state'},
         }
         # default sort by order
@@ -209,13 +215,30 @@ class website_account(website_account):
         })
         return request.render("website_portal_sale.portal_my_invoices", values)
 
+    @http.route(['/my/invoices/<int:invoice_id>'], type='http', auth="user", website=True)
+    def portal_my_invoices_report(self, invoice_id, **kw):
+        invoice = request.env['account.invoice'].browse(invoice_id)
+        try:
+            invoice.check_access_rights('read')
+            invoice.check_access_rule('read')
+        except AccessError:
+            return request.render("website.403")
+        # print report as sudo, since it require access to taxes, payment term, ... and portal
+        # does not have those access rights.
+        pdf = request.env.ref('account.account_invoices').sudo().render_qweb_pdf([invoice_id])[0]
+        pdfhttpheaders = [
+            ('Content-Type', 'application/pdf'),
+            ('Content-Length', len(pdf)),
+        ]
+        return request.make_response(pdf, headers=pdfhttpheaders)
+
     def details_form_validate(self, data):
         error, error_message = super(website_account, self).details_form_validate(data)
         # prevent VAT/name change if invoices exist
         partner = request.env['res.users'].browse(request.uid).partner_id
         invoices = request.env['account.invoice'].sudo().search_count([('partner_id', '=', partner.id), ('state', 'not in', ['draft', 'cancel'])])
         if invoices:
-            if data.get('vat', partner.vat) != partner.vat:
+            if (data.get('vat', partner.vat) or False) != partner.vat:
                 error['vat'] = 'error'
                 error_message.append(_('Changing VAT number is not allowed once invoices have been issued for your account. Please contact us directly for this operation.'))
             if data.get('name', partner.name) != partner.name:

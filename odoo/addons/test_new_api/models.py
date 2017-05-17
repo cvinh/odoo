@@ -4,7 +4,8 @@
 import datetime
 
 from odoo import models, fields, api, _
-from odoo.exceptions import AccessError
+from odoo.exceptions import AccessError, ValidationError
+from odoo.tools import pycompat
 
 
 class Category(models.Model):
@@ -45,7 +46,7 @@ class Category(models.Model):
             categories.append(category[0])
         categories.append(self)
         # assign parents following sequence
-        for parent, child in zip(categories, categories[1:]):
+        for parent, child in pycompat.izip(categories, categories[1:]):
             if parent and child:
                 child.parent = parent
         # assign name of last category, and reassign display_name (to normalize it)
@@ -81,6 +82,20 @@ class Discussion(models.Model):
     def _domain_very_important(self):
         """Ensure computed O2M domains work as expected."""
         return [("important", "=", True)]
+
+    @api.onchange('name')
+    def _onchange_name(self):
+        # test onchange modifying one2many field values
+        if self.env.context.get('generate_dummy_message') and self.name == '{generate_dummy_message}':
+            # update body of existings messages and emails
+            for message in self.messages:
+                message.body = 'not last dummy message'
+            for message in self.important_messages:
+                message.body = 'not last dummy message'
+            # add new dummy message
+            message_vals = self.messages._add_missing_default_values({'body': 'dummy message', 'important': True})
+            self.messages |= self.messages.new(message_vals)
+            self.important_messages |= self.messages.new(message_vals)
 
     @api.onchange('moderator')
     def _onchange_moderator(self):
@@ -154,7 +169,7 @@ class Message(models.Model):
     @api.one
     @api.depends('author', 'author.partner_id')
     def _compute_author_partner(self):
-        self.author_partner = author.partner_id
+        self.author_partner = self.author.partner_id
 
     @api.model
     def _search_author_partner(self, operator, value):
@@ -199,6 +214,33 @@ class MultiLine(models.Model):
     partner = fields.Many2one('res.partner')
 
 
+class Edition(models.Model):
+    _name = 'test_new_api.creativework.edition'
+
+    name = fields.Char()
+    res_id = fields.Integer(required=True)
+    res_model_id = fields.Many2one('ir.model', required=True)
+    res_model = fields.Char(related='res_model_id.model', store=True)
+
+
+class Book(models.Model):
+    _name = 'test_new_api.creativework.book'
+
+    name = fields.Char()
+    editions = fields.One2many(
+        'test_new_api.creativework.edition', 'res_id', domain=[('res_model', '=', _name)]
+    )
+
+
+class Movie(models.Model):
+    _name = 'test_new_api.creativework.movie'
+
+    name = fields.Char()
+    editions = fields.One2many(
+        'test_new_api.creativework.edition', 'res_id', domain=[('res_model', '=', _name)]
+    )
+
+
 class MixedModel(models.Model):
     _name = 'test_new_api.mixed'
 
@@ -227,7 +269,7 @@ class MixedModel(models.Model):
 
     @api.model
     def _reference_models(self):
-        models = self.env['ir.model'].search([('state', '!=', 'manual')])
+        models = self.env['ir.model'].sudo().search([('state', '!=', 'manual')])
         return [(model.model, model.name)
                 for model in models
                 if not model.model.startswith('ir.')]
@@ -297,14 +339,30 @@ class CompanyDependent(models.Model):
 
     foo = fields.Char(company_dependent=True)
 
+class CompanyDependentAttribute(models.Model):
+    _name = 'test_new_api.company.attr'
 
-class Sparse(models.Model):
-    _name = 'test_new_api.sparse'
+    company = fields.Many2one('test_new_api.company')
+    quantity = fields.Integer()
+    bar = fields.Char(compute='_compute_bar', store=True)
 
-    data = fields.Serialized()
-    boolean = fields.Boolean(sparse='data')
-    integer = fields.Integer(sparse='data')
-    float = fields.Float(sparse='data')
-    char = fields.Char(sparse='data')
-    selection = fields.Selection([('one', 'One'), ('two', 'Two')], sparse='data')
-    partner = fields.Many2one('res.partner', sparse='data')
+    @api.depends('quantity', 'company.foo')
+    def _compute_bar(self):
+        for record in self:
+            record.bar = (record.company.foo or '') * record.quantity
+
+
+class ComputeRecursive(models.Model):
+    _name = 'test_new_api.recursive'
+
+    name = fields.Char(required=True)
+    parent = fields.Many2one('test_new_api.recursive')
+    display_name = fields.Char(compute='_compute_display_name', store=True)
+
+    @api.depends('name', 'parent.display_name')
+    def _compute_display_name(self):
+        for rec in self:
+            if rec.parent:
+                rec.display_name = rec.parent.display_name + " / " + rec.name
+            else:
+                rec.display_name = rec.name

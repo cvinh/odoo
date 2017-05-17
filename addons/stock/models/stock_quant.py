@@ -3,7 +3,7 @@ from datetime import datetime
 from odoo import api, fields, models
 from odoo.tools.float_utils import float_compare, float_round
 from odoo.tools.translate import _
-from odoo.tools import DEFAULT_SERVER_DATETIME_FORMAT
+from odoo.tools import DEFAULT_SERVER_DATETIME_FORMAT, pycompat
 from odoo.exceptions import UserError
 
 import logging
@@ -44,7 +44,7 @@ class Quant(models.Model):
     lot_id = fields.Many2one(
         'stock.production.lot', 'Lot/Serial Number',
         index=True, ondelete="restrict", readonly=True)
-    cost = fields.Float('Unit Cost')
+    cost = fields.Float('Unit Cost', group_operator='avg')
     owner_id = fields.Many2one(
         'res.partner', 'Owner',
         index=True, readonly=True,
@@ -266,17 +266,6 @@ class Quant(models.Model):
         # create the quant as superuser, because we want to restrict the creation of quant manually: we should always use this method to create quants
         return self.sudo().create(vals)
 
-    @api.model
-    def _quant_create(self, qty, move, lot_id=False, owner_id=False,
-                      src_package_id=False, dest_package_id=False,
-                      force_location_from=False, force_location_to=False):
-        # FIXME - remove me in master/saas-14
-        _logger.warning("'_quant_create' has been renamed into '_quant_create_from_move'... Overrides are ignored")
-        return self._quant_create_from_move(
-            qty, move, lot_id=lot_id, owner_id=owner_id,
-            src_package_id=src_package_id, dest_package_id=dest_package_id,
-            force_location_from=force_location_from, force_location_to=force_location_to)
-
     @api.multi
     def _quant_update_from_move(self, move, location_dest_id, dest_package_id, lot_id=False, entire_pack=False):
         vals = {
@@ -288,12 +277,6 @@ class Quant(models.Model):
         if not entire_pack:
             vals.update({'package_id': dest_package_id})
         self.write(vals)
-
-    @api.multi
-    def move_quants_write(self, move, location_dest_id, dest_package_id, lot_id=False, entire_pack=False):
-        # FIXME - remove me in master/saas-14
-        _logger.warning("'move_quants_write' has been renamed into '_quant_update_from_move'... Overrides are ignored")
-        return self._quant_update_from_move(move, location_dest_id, dest_package_id, lot_id=lot_id, entire_pack=entire_pack)
 
     @api.one
     def _quant_reconcile_negative(self, move):
@@ -537,7 +520,7 @@ class Quant(models.Model):
                 if any(quant not in self for quant in package.get_content()):
                     all_in = False
                 if all_in:
-                    destinations = [product_to_location[product] for product in package.get_content().mapped('product_id')]
+                    destinations = set([product_to_location[product] for product in package.get_content().mapped('product_id')])
                     if len(destinations) > 1:
                         all_in = False
                 if all_in:
@@ -576,10 +559,7 @@ class QuantPackage(models.Model):
     """ Packages containing quants and/or other packages """
     _name = "stock.quant.package"
     _description = "Physical Packages"
-    _parent_name = "parent_id"
-    _parent_store = True
-    _parent_order = 'name'
-    _order = 'parent_left'
+    _order = 'name'
 
     name = fields.Char(
         'Package Reference', copy=False, index=True,
@@ -592,19 +572,17 @@ class QuantPackage(models.Model):
     ancestor_ids = fields.One2many('stock.quant.package', string='Ancestors', compute='_compute_ancestor_ids')
     children_quant_ids = fields.One2many('stock.quant', string='All Bulk Content', compute='_compute_children_quant_ids')
     children_ids = fields.One2many('stock.quant.package', 'parent_id', 'Contained Packages', readonly=True)
-    parent_left = fields.Integer('Left Parent', index=True)
-    parent_right = fields.Integer('Right Parent', index=True)
     packaging_id = fields.Many2one(
         'product.packaging', 'Package Type', index=True,
         help="This field should be completed only if everything inside the package share the same product, otherwise it doesn't really makes sense.")
     location_id = fields.Many2one(
-        'stock.location', 'Location', compute='_compute_package_info',
+        'stock.location', 'Location', compute='_compute_package_info', search='_search_location',
         index=True, readonly=True)
     company_id = fields.Many2one(
-        'res.company', 'Company', compute='_compute_package_info',
+        'res.company', 'Company', compute='_compute_package_info', search='_search_company',
         index=True, readonly=True)
     owner_id = fields.Many2one(
-        'res.partner', 'Owner', compute='_compute_package_info',
+        'res.partner', 'Owner', compute='_compute_package_info', search='_search_owner',
         index=True, readonly=True)
 
     @api.one
@@ -612,11 +590,12 @@ class QuantPackage(models.Model):
     def _compute_ancestor_ids(self):
         self.ancestor_ids = self.env['stock.quant.package'].search(['id', 'parent_of', self.id]).ids
 
-    @api.one
+    @api.multi
     @api.depends('parent_id', 'children_ids', 'quant_ids.package_id')
     def _compute_children_quant_ids(self):
         for package in self:
-            package.children_quant_ids = self.env['stock.quant'].search([('package_id', 'child_of', package.id)]).ids
+            if package.id:
+                package.children_quant_ids = self.env['stock.quant'].search([('package_id', 'child_of', package.id)]).ids
 
     @api.depends('quant_ids.package_id', 'quant_ids.location_id', 'quant_ids.company_id', 'quant_ids.owner_id', 'ancestor_ids')
     def _compute_package_info(self):
@@ -632,7 +611,7 @@ class QuantPackage(models.Model):
 
     @api.multi
     def name_get(self):
-        return self._compute_complete_name().items()
+        return list(pycompat.items(self._compute_complete_name()))
 
     def _compute_complete_name(self):
         """ Forms complete name of location from parent location to child location. """
@@ -645,6 +624,36 @@ class QuantPackage(models.Model):
                 current = current.parent_id
             res[package.id] = name
         return res
+
+    def _search_location(self, operator, value):
+        if value:
+            packs = self.search([('quant_ids.location_id', operator, value)])
+        else:
+            packs = self.search([('quant_ids', operator, value)])
+        if packs:
+            return [('id', 'parent_of', packs.ids)]
+        else:
+            return [('id', '=', False)]
+
+    def _search_company(self, operator, value):
+        if value:
+            packs = self.search([('quant_ids.company_id', operator, value)])
+        else:
+            packs = self.search([('quant_ids', operator, value)])
+        if packs:
+            return [('id', 'parent_of', packs.ids)]
+        else:
+            return [('id', '=', False)]
+
+    def _search_owner(self, operator, value):
+        if value:
+            packs = self.search([('quant_ids.owner_id', operator, value)])
+        else:
+            packs = self.search([('quant_ids', operator, value)])
+        if packs:
+            return [('id', 'parent_of', packs.ids)]
+        else:
+            return [('id', '=', False)]
 
     def _check_location_constraint(self):
         '''checks that all quants in a package are stored in the same location. This function cannot be used
@@ -666,7 +675,6 @@ class QuantPackage(models.Model):
             # TDE FIXME: why superuser ?
             package.mapped('quant_ids').sudo().write({'package_id': package.parent_id.id})
             package.mapped('children_ids').write({'parent_id': package.parent_id.id})
-        self.unlink()
         return self.env['ir.actions.act_window'].for_xml_id('stock', 'action_package_view')
 
     def action_view_picking(self):

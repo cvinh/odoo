@@ -4,9 +4,20 @@
 from odoo import http
 from odoo.http import request
 from odoo import tools
+from odoo.tools import pycompat
 from odoo.tools.translate import _
 
 from odoo.fields import Date
+
+
+def get_records_pager(ids, current):
+    if current.id in ids:
+        idx = ids.index(current.id)
+        return {
+            'prev_record': idx != 0 and current.browse(ids[idx - 1]).website_url,
+            'next_record': idx < len(ids) - 1 and current.browse(ids[idx + 1]).website_url
+        }
+    return {}
 
 
 class website_account(http.Controller):
@@ -89,7 +100,9 @@ class website_account(http.Controller):
             'redirect': redirect,
         })
 
-        return request.render("website_portal.details", values)
+        response = request.render("website_portal.details", values)
+        response.headers['X-Frame-Options'] = 'DENY'
+        return response
 
     def details_form_validate(self, data):
         error = dict()
@@ -107,7 +120,7 @@ class website_account(http.Controller):
 
         # vat validation
         if data.get("vat") and hasattr(request.env["res.partner"], "check_vat"):
-            if request.website.company_id.vat_check_vies:
+            if request.website.company_id.sudo().vat_check_vies:
                 # force full VIES online check
                 check_func = request.env["res.partner"].vies_vat_check
             else:
@@ -118,10 +131,10 @@ class website_account(http.Controller):
                 error["vat"] = 'error'
 
         # error message for empty required fields
-        if [err for err in error.values() if err == 'missing']:
+        if [err for err in pycompat.values(error) if err == 'missing']:
             error_message.append(_('Some required fields are empty.'))
 
-        unknown = [k for k in data.iterkeys() if k not in self.MANDATORY_BILLING_FIELDS + self.OPTIONAL_BILLING_FIELDS]
+        unknown = [k for k in data if k not in self.MANDATORY_BILLING_FIELDS + self.OPTIONAL_BILLING_FIELDS]
         if unknown:
             error['common'] = 'Unknown field'
             error_message.append("Unknown field '%s'" % ','.join(unknown))

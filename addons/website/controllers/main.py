@@ -7,18 +7,20 @@ import json
 import xml.etree.ElementTree as ET
 import logging
 import re
-import urllib2
+
+import requests
 import werkzeug.utils
 import werkzeug.wrappers
 
 import odoo
-from odoo import http
+from odoo import http, models
 from odoo import fields
 from odoo.http import request
-from odoo.osv.orm import browse_record
 
 from odoo.addons.website.models.website import slug
 from odoo.addons.web.controllers.main import WebClient, Binary, Home
+
+from odoo.tools import pycompat
 
 logger = logging.getLogger(__name__)
 
@@ -36,13 +38,13 @@ class QueryURL(object):
 
     def __call__(self, path=None, path_args=None, **kw):
         path = path or self.path
-        for key, value in self.args.items():
+        for key, value in pycompat.items(self.args):
             kw.setdefault(key, value)
         path_args = set(path_args or []).union(self.path_args)
         paths, fragments = [], []
-        for key, value in kw.items():
+        for key, value in pycompat.items(kw):
             if value and key in path_args:
-                if isinstance(value, browse_record):
+                if isinstance(value, models.BaseModel):
                     paths.append((key, slug(value)))
                 else:
                     paths.append((key, value))
@@ -110,13 +112,13 @@ class Website(Home):
         }
         # /page/website.XXX --> /page/XXX
         if page.startswith('website.'):
-            return request.redirect('/page/' + page[8:], code=301)
+            return request.redirect('/page/%s?%s' % (page[8:], request.httprequest.query_string), code=301)
         elif '.' not in page:
             page = 'website.%s' % page
 
         try:
             request.website.get_template(page)
-        except ValueError, e:
+        except ValueError as e:
             # page not found
             if request.website.is_publisher():
                 values.pop('deletable')
@@ -137,6 +139,7 @@ class Website(Home):
 
     @http.route('/sitemap.xml', type='http', auth="public", website=True)
     def sitemap_xml_index(self):
+        current_website = request.website
         Attachment = request.env['ir.attachment'].sudo()
         View = request.env['ir.ui.view'].sudo()
         mimetype = 'application/xml;charset=utf-8'
@@ -150,8 +153,8 @@ class Website(Home):
                 'name': url,
                 'url': url,
             })
-
-        sitemap = Attachment.search([('url', '=', '/sitemap.xml'), ('type', '=', 'binary')], limit=1)
+        dom = [('url', '=' , '/sitemap-%d.xml' % current_website.id), ('type', '=', 'binary')]
+        sitemap = Attachment.search(dom, limit=1)
         if sitemap:
             # Check if stored version is still valid
             create_date = fields.Datetime.from_string(sitemap.create_date)
@@ -161,7 +164,9 @@ class Website(Home):
 
         if not content:
             # Remove all sitemaps in ir.attachments as we're going to regenerated them
-            sitemaps = Attachment.search([('url', '=like', '/sitemap%.xml'), ('type', '=', 'binary')])
+            dom = [('type', '=', 'binary'), '|', ('url', '=like' , '/sitemap-%d-%%.xml' % current_website.id),
+                   ('url', '=' , '/sitemap-%d.xml' % current_website.id)]
+            sitemaps = Attachment.search(dom)
             sitemaps.unlink()
 
             pages = 0
@@ -175,24 +180,28 @@ class Website(Home):
                 if urls.strip():
                     content = View.render_template('website.sitemap_xml', {'content': urls})
                     pages += 1
-                    last_sitemap = create_sitemap('/sitemap-%d.xml' % pages, content)
+                    last_sitemap = create_sitemap('/sitemap-%d-%d.xml' % (current_website.id, pages), content)
                 else:
                     break
 
             if not pages:
                 return request.not_found()
             elif pages == 1:
+                # rename the -id-page.xml => -id.xml
                 last_sitemap.write({
-                    'url': "/sitemap.xml",
-                    'name': "/sitemap.xml"
+                    'url': "/sitemap-%d.xml" % current_website.id,
+                    'name': "/sitemap-%d.xml" % current_website.id,
                 })
             else:
+                # TODO: in master/saas-15, move current_website_id in template directly
+                pages_with_website = ["%d-%d" % (current_website.id, p) for p in range(1, pages + 1)]
+
                 # Sitemaps must be split in several smaller files with a sitemap index
                 content = View.render_template('website.sitemap_index_xml', {
-                    'pages': range(1, pages + 1),
+                    'pages': pages_with_website,
                     'url_root': request.httprequest.url_root,
                 })
-                create_sitemap('/sitemap.xml', content)
+                create_sitemap('/sitemap-%d.xml' % current_website.id, content)
 
         return request.make_response(content, [('Content-Type', mimetype)])
 
@@ -200,7 +209,7 @@ class Website(Home):
     def website_info(self):
         try:
             request.website.get_template('website.website_info').name
-        except Exception, e:
+        except Exception as e:
             return request.env['ir.http']._handle_exception(e, 404)
         Module = request.env['ir.module.module'].sudo()
         apps = Module.search([('state', '=', 'installed'), ('application', '=', True)])
@@ -239,6 +248,11 @@ class Website(Home):
     @http.route(['/website/snippets'], type='json', auth="user", website=True)
     def snippets(self):
         return request.env['ir.ui.view'].render_template('website.snippets')
+
+    @http.route("/website/get_switchable_related_views", type="json", auth="user", website=True)
+    def get_switchable_related_views(self, key):
+        views = request.env["ir.ui.view"].get_related_views(key, bundles=False).filtered(lambda v: v.customize_show)
+        return views.read(['name', 'id', 'key', 'xml_id', 'arch', 'active', 'inherit_id'])
 
     @http.route('/website/reset_templates', type='http', auth='user', methods=['POST'], website=True)
     def reset_template(self, templates, redirect='/'):
@@ -287,12 +301,13 @@ class Website(Home):
         language = lang.split("_")
         url = "http://google.com/complete/search"
         try:
-            req = urllib2.Request("%s?%s" % (url, werkzeug.url_encode({
-                'ie': 'utf8', 'oe': 'utf8', 'output': 'toolbar', 'q': keywords, 'hl': language[0], 'gl': language[1]})))
-            response = urllib2.urlopen(req)
-        except (urllib2.HTTPError, urllib2.URLError):
+            req = requests.get(url, params={
+                'ie': 'utf8', 'oe': 'utf8', 'output': 'toolbar', 'q': keywords, 'hl': language[0], 'gl': language[1]})
+            req.raise_for_status()
+            response = req.content
+        except IOError:
             return []
-        xmlroot = ET.fromstring(response.read())
+        xmlroot = ET.fromstring(response)
         return json.dumps([sugg[0].attrib['data'] for sugg in xmlroot if len(sugg) and sugg[0].attrib['data']])
 
     #------------------------------------------------------

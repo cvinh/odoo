@@ -6,17 +6,17 @@ import datetime
 import hashlib
 import pytz
 import threading
-import urllib2
-import urlparse
 
 from email.utils import formataddr
-from lxml import etree
 
-from odoo import api, fields, models, tools, _
+import requests
+from lxml import etree
+from werkzeug import urls
+
+from odoo import api, fields, models, tools, SUPERUSER_ID, _
 from odoo.modules import get_module_resource
 from odoo.osv.expression import get_unaccent_wrapper
 from odoo.exceptions import UserError, ValidationError
-from odoo.osv.orm import browse_record
 
 # Global variables used for the warning fields declared on the res.partner
 # in the following modules : sale, purchase, account, stock 
@@ -27,11 +27,6 @@ WARNING_MESSAGE = [
                    ]
 WARNING_HELP = _('Selecting the "Warning" option will notify user with the message, Selecting "Blocking Message" will throw an exception with the message and block the flow. The Message has to be written in the next field.')
 
-
-ADDRESS_FORMAT_CLASSES = {
-    '%(city)s %(state_code)s\n%(zip)s': 'o_city_state',
-    '%(zip)s %(city)s': 'o_zip_city'
-}
 
 ADDRESS_FIELDS = ('street', 'street2', 'zip', 'city', 'state_id', 'country_id')
 @api.model
@@ -44,26 +39,30 @@ def _tz_get(self):
     return [(tz, tz) for tz in sorted(pytz.all_timezones, key=lambda tz: tz if not tz.startswith('Etc/') else '_')]
 
 
-class FormatAddress(object):
-    @api.model
-    def fields_view_get_address(self, arch):
-        address_format = self.env.user.company_id.country_id.address_format or ''
-        for format_pattern, format_class in ADDRESS_FORMAT_CLASSES.iteritems():
-            if format_pattern in address_format:
-                doc = etree.fromstring(arch)
-                for address_node in doc.xpath("//div[@class='o_address_format']"):
-                    # add address format class to address block
-                    address_node.attrib['class'] += ' ' + format_class
-                    if format_class.startswith('o_zip'):
-                        zip_fields = address_node.xpath("//field[@name='zip']")
-                        city_fields = address_node.xpath("//field[@name='city']")
-                        if zip_fields and city_fields:
-                            # move zip field before city field
-                            city_fields[0].addprevious(zip_fields[0])
-                arch = etree.tostring(doc)
-                break
-        return arch
+class FormatAddressMixin(models.AbstractModel):
+    _name = "format.address.mixin"
 
+    def _fields_view_get_address(self, arch):
+        # consider the country of the user, not the country of the partner we want to display
+        address_view_id = self.env.user.company_id.country_id.address_view_id
+        if address_view_id and not self._context.get('no_address_format'):
+            #render the partner address accordingly to address_view_id
+            doc = etree.fromstring(arch)
+            for address_node in doc.xpath("//div[@class='o_address_format']"):
+                Partner = self.env['res.partner'].with_context(no_address_format=True)
+                sub_view = Partner.fields_view_get(
+                    view_id=address_view_id.id, view_type='form', toolbar=False, submenu=False)
+                sub_view_node = etree.fromstring(sub_view['arch'])
+                #if the model is different than res.partner, there are chances that the view won't work
+                #(e.g fields not present on the model). In that case we just return arch
+                if self._name != 'res.partner':
+                    try:
+                        self.env['ir.ui.view'].postprocess_and_fields(self._name, sub_view_node, None)
+                    except ValueError:
+                        return arch
+                address_node.getparent().replace(address_node, sub_view_node)
+            arch = etree.tostring(doc)
+        return arch
 
 class PartnerCategory(models.Model):
     _description = 'Partner Tags'
@@ -127,8 +126,9 @@ class PartnerTitle(models.Model):
 
     _sql_constraints = [('name_uniq', 'unique (name)', "Title name already exists !")]
 
-class Partner(models.Model, FormatAddress):
-    _description = 'Partner'
+class Partner(models.Model):
+    _description = 'Contact'
+    _inherit = ['format.address.mixin']
     _name = "res.partner"
     _order = "display_name"
 
@@ -307,12 +307,12 @@ class Partner(models.Model, FormatAddress):
         return tools.image_resize_image_big(image.encode('base64'))
 
     @api.model
-    def fields_view_get(self, view_id=None, view_type='form', toolbar=False, submenu=False):
+    def _fields_view_get(self, view_id=None, view_type='form', toolbar=False, submenu=False):
         if (not view_id) and (view_type == 'form') and self._context.get('force_email'):
             view_id = self.env.ref('base.view_partner_simple_form').id
-        res = super(Partner, self).fields_view_get(view_id=view_id, view_type=view_type, toolbar=toolbar, submenu=submenu)
+        res = super(Partner, self)._fields_view_get(view_id=view_id, view_type=view_type, toolbar=toolbar, submenu=submenu)
         if view_type == 'form':
-            res['arch'] = self.fields_view_get_address(res['arch'])
+            res['arch'] = self._fields_view_get_address(res['arch'])
         return res
 
     @api.constrains('parent_id')
@@ -350,6 +350,13 @@ class Partner(models.Model, FormatAddress):
                     return value.id if isinstance(value, models.BaseModel) else value
                 result['value'] = {key: convert(self.parent_id[key]) for key in address_fields}
         return result
+
+    @api.onchange('country_id')
+    def _onchange_country_id(self):
+        if self.country_id:
+            return {'domain': {'state_id': [('country_id', '=', self.country_id.id)]}}
+        else:
+            return {'domain': {'state_id': []}}
 
     @api.onchange('email')
     def onchange_email(self):
@@ -423,6 +430,7 @@ class Partner(models.Model, FormatAddress):
         sync_children = self.child_ids.filtered(lambda c: not c.is_company)
         for child in sync_children:
             child._commercial_sync_to_children()
+        sync_children._compute_commercial_partner()
         return sync_children.write(sync_vals)
 
     @api.multi
@@ -446,6 +454,10 @@ class Partner(models.Model, FormatAddress):
                 commercial_fields = self._commercial_fields()
                 if any(field in values for field in commercial_fields):
                     self._commercial_sync_to_children()
+            for child in self.child_ids.filtered(lambda c: not c.is_company):
+                if child.commercial_partner_id != self.commercial_partner_id :
+                    self._commercial_sync_to_children()
+                    break
             # 2b. Address fields: sync if address changed
             address_fields = self._address_fields()
             if any(field in values for field in address_fields):
@@ -464,11 +476,11 @@ class Partner(models.Model, FormatAddress):
             parent.update_address(addr_vals)
 
     def _clean_website(self, website):
-        (scheme, netloc, path, params, query, fragment) = urlparse.urlparse(website)
-        if not scheme:
-            if not netloc:
-                netloc, path = path, ''
-            website = urlparse.urlunparse(('http', netloc, path, params, query, fragment))
+        url = urls.url_parse(website)
+        if not url.scheme:
+            if not url.netloc:
+                url = url.replace(netloc=url.path, path='')
+            website = url.replace(scheme='http').to_url()
         return website
 
     @api.multi
@@ -491,7 +503,12 @@ class Partner(models.Model, FormatAddress):
                         raise UserError(_("You can not change the company as the partner/user has multiple user linked with different companies."))
         tools.image_resize_images(vals)
 
-        result = super(Partner, self).write(vals)
+        result = True
+        # To write in SUPERUSER on field is_company and avoid access rights problems.
+        if 'is_company' in vals and self.user_has_groups('base.group_partner_manager') and not self.env.uid == SUPERUSER_ID:
+            result = super(Partner, self).sudo().write({'is_company': vals.get('is_company')})
+            del vals['is_company']
+        result = result and super(Partner, self).write(vals)
         for partner in self:
             if any(u.has_group('base.group_user') for u in partner.user_ids if u != self.env.user):
                 self.env['res.users'].check_access_rights('write')
@@ -602,7 +619,7 @@ class Partner(models.Model, FormatAddress):
             raise UserError(_("Couldn't create contact without email address!"))
         if not name and email:
             name = email
-        partner = self.create({self._rec_name: name or email, 'email': email or False})
+        partner = self.create({self._rec_name: name or email, 'email': email or self.env.context.get('default_email', False)})
         return partner.name_get()[0]
 
     @api.model
@@ -658,7 +675,7 @@ class Partner(models.Model, FormatAddress):
                 query += ' limit %s'
                 where_clause_params.append(limit)
             self.env.cr.execute(query, where_clause_params)
-            partner_ids = map(lambda x: x[0], self.env.cr.fetchall())
+            partner_ids = [row[0] for row in self.env.cr.fetchall()]
 
             if partner_ids:
                 return self.browse(partner_ids).name_get()
@@ -681,15 +698,12 @@ class Partner(models.Model, FormatAddress):
         return partners.id or self.name_create(email)[0]
 
     def _get_gravatar_image(self, email):
-        gravatar_image = False
         email_hash = hashlib.md5(email.lower()).hexdigest()
         url = "https://www.gravatar.com/avatar/" + email_hash
-        try:
-            image_content = urllib2.urlopen(url + "?d=404&s=128", timeout=5).read()
-            gravatar_image = base64.b64encode(image_content)
-        except Exception:
-            pass
-        return gravatar_image
+        res = requests.get(url, params={'d': '404', 's': '128'}, timeout=5)
+        if res.status_code != requests.codes.ok:
+            return False
+        return base64.b64encode(res.content)
 
     @api.multi
     def _email_send(self, email_from, subject, body, on_error=None):

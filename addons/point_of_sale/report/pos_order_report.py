@@ -12,7 +12,7 @@ class PosOrderReport(models.Model):
 
     date = fields.Datetime(string='Date Order', readonly=True)
     order_id = fields.Many2one('pos.order', string='Order', readonly=True)
-    partner_id = fields.Many2one('res.partner', string='Partner', readonly=True)
+    partner_id = fields.Many2one('res.partner', string='Customer', readonly=True)
     product_id = fields.Many2one('product.product', string='Product', readonly=True)
     product_tmpl_id = fields.Many2one('product.template', string='Product Template', readonly=True)
     state = fields.Selection(
@@ -47,7 +47,7 @@ class PosOrderReport(models.Model):
                     MIN(l.id) AS id,
                     COUNT(*) AS nbr_lines,
                     s.date_order AS date,
-                    SUM(l.qty * u.factor) AS product_qty,
+                    SUM(l.qty) AS product_qty,
                     SUM(l.qty * l.price_unit) AS price_sub_total,
                     SUM((l.qty * l.price_unit) * (100 - l.discount) / 100) AS price_total,
                     SUM((l.qty * l.price_unit) * (l.discount / 100)) AS total_discount,

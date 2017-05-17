@@ -1,18 +1,17 @@
 # -*- coding: utf-8 -*-
 # Part of Odoo. See LICENSE file for full copyright and licensing details.
-
+import requests
 from PIL import Image
-from urllib import urlencode
-from urlparse import urlparse
 
 import datetime
 import io
 import json
 import re
-import urllib2
+
+from werkzeug import urls
 
 from odoo import api, fields, models, SUPERUSER_ID, _
-from odoo.tools import image
+from odoo.tools import image, pycompat
 from odoo.tools.translate import html_translate
 from odoo.exceptions import Warning
 from odoo.addons.website.models.website import slug
@@ -146,7 +145,7 @@ class Channel(models.Model):
     @api.depends('name')
     def _compute_website_url(self):
         super(Channel, self)._compute_website_url()
-        base_url = self.env['ir.config_parameter'].get_param('web.base.url')
+        base_url = self.env['ir.config_parameter'].sudo().get_param('web.base.url')
         for channel in self:
             if channel.id:  # avoid to perform a slug on a not yet saved record in case of an onchange.
                 channel.website_url = '%s/slides/%s' % (base_url, slug(channel))
@@ -165,6 +164,7 @@ class Channel(models.Model):
         return res
 
     @api.multi
+    @api.returns('self', lambda value: value.id)
     def message_post(self, parent_id=False, subtype=None, **kwargs):
         """ Temporary workaround to avoid spam. If someone replies on a channel
         through the 'Presentation Published' email, it should be considered as a
@@ -223,8 +223,7 @@ class EmbeddedSlide(models.Model):
     count_views = fields.Integer('# Views', default=1)
 
     def add_embed_url(self, slide_id, url):
-        schema = urlparse(url)
-        baseurl = schema.netloc
+        baseurl = urls.url_parse(url).netloc
         embeds = self.search([('url', '=', baseurl), ('slide_id', '=', int(slide_id))], limit=1)
         if embeds:
             embeds.count_views += 1
@@ -241,7 +240,7 @@ class SlideTag(models.Model):
     _name = 'slide.tag'
     _description = 'Slide Tag'
 
-    name = fields.Char('Name', required=True)
+    name = fields.Char('Name', required=True, translate=True)
 
     _sql_constraints = [
         ('slide_tag_unique', 'UNIQUE(name)', 'A tag must be unique!'),
@@ -322,7 +321,7 @@ class Slide(models.Model):
             values = res['values']
             if not values.get('document_id'):
                 raise Warning(_('Please enter valid Youtube or Google Doc URL'))
-            for key, value in values.iteritems():
+            for key, value in pycompat.items(values):
                 setattr(self, key, value)
 
     # website
@@ -347,7 +346,7 @@ class Slide(models.Model):
     embed_code = fields.Text('Embed Code', readonly=True, compute='_get_embed_code')
 
     def _get_embed_code(self):
-        base_url = self.env['ir.config_parameter'].get_param('web.base.url')
+        base_url = self.env['ir.config_parameter'].sudo().get_param('web.base.url')
         for record in self:
             if record.datas and (not record.document_id or record.slide_type in ['document', 'presentation']):
                 record.embed_code = '<iframe src="%s/slides/embed/%s?page=1" allowFullScreen="true" height="%s" width="%s" frameborder="0"></iframe>' % (base_url, record.id, 315, 420)
@@ -365,7 +364,7 @@ class Slide(models.Model):
     @api.depends('name')
     def _compute_website_url(self):
         super(Slide, self)._compute_website_url()
-        base_url = self.env['ir.config_parameter'].get_param('web.base.url')
+        base_url = self.env['ir.config_parameter'].sudo().get_param('web.base.url')
         for slide in self:
             if slide.id:  # avoid to perform a slug on a not yet saved record in case of an onchange.
                 # link_tracker is not in dependencies, so use it to shorten url only if installed.
@@ -385,7 +384,7 @@ class Slide(models.Model):
             values['date_published'] = datetime.datetime.now()
         if values.get('url'):
             doc_data = self._parse_document_url(values['url']).get('values', dict())
-            for key, value in doc_data.iteritems():
+            for key, value in pycompat.items(doc_data):
                 values.setdefault(key, value)
         # Do not publish slide if user has not publisher rights
         if not self.user_has_groups('website.group_website_publisher'):
@@ -399,7 +398,7 @@ class Slide(models.Model):
     def write(self, values):
         if values.get('url'):
             doc_data = self._parse_document_url(values['url']).get('values', dict())
-            for key, value in doc_data.iteritems():
+            for key, value in pycompat.items(doc_data):
                 values.setdefault(key, value)
         if values.get('channel_id'):
             custom_channels = self.env['slide.channel'].search([('custom_slide_id', '=', self.id), ('id', '!=', values.get('channel_id'))])
@@ -473,10 +472,10 @@ class Slide(models.Model):
             yield record
 
     def _post_publication(self):
-        base_url = self.env['ir.config_parameter'].get_param('web.base.url')
+        base_url = self.env['ir.config_parameter'].sudo().get_param('web.base.url')
         for slide in self.filtered(lambda slide: slide.website_published and slide.channel_id.publish_template_id):
             publish_template = slide.channel_id.publish_template_id
-            html_body = publish_template.with_context({'base_url': base_url}).render_template(publish_template.body_html, 'slide.slide', slide.id)
+            html_body = publish_template.with_context(base_url=base_url).render_template(publish_template.body_html, 'slide.slide', slide.id)
             subject = publish_template.render_template(publish_template.subject, 'slide.slide', slide.id)
             slide.channel_id.message_post(
                 subject=subject,
@@ -486,32 +485,30 @@ class Slide(models.Model):
 
     @api.one
     def send_share_email(self, email):
-        base_url = self.env['ir.config_parameter'].get_param('web.base.url')
-        return self.channel_id.share_template_id.with_context({'email': email, 'base_url': base_url}).send_mail(self.id)
+        base_url = self.env['ir.config_parameter'].sudo().get_param('web.base.url')
+        return self.channel_id.share_template_id.with_context(email=email, base_url=base_url).send_mail(self.id)
 
     # --------------------------------------------------
     # Parsing methods
     # --------------------------------------------------
 
     @api.model
-    def _fetch_data(self, base_url, data, content_type=False):
+    def _fetch_data(self, base_url, data, content_type=False, extra_params=False):
         result = {'values': dict()}
         try:
-            if data:
-                base_url = base_url + '?%s' % urlencode(data)
-            req = urllib2.Request(base_url)
-            content = urllib2.urlopen(req).read()
+            response = requests.get(base_url, params=data)
+            response.raise_for_status()
+            content = response.content
             if content_type == 'json':
                 result['values'] = json.loads(content)
             elif content_type in ('image', 'pdf'):
                 result['values'] = content.encode('base64')
             else:
                 result['values'] = content
-        except urllib2.HTTPError as e:
-            result['error'] = e.read()
-            e.close()
-        except urllib2.URLError as e:
-            result['error'] = e.reason
+        except requests.exceptions.HTTPError as e:
+            result['error'] = e.response.content
+        except requests.exceptions.ConnectionError as e:
+            result['error'] = str(e)
         return result
 
     def _find_document_data_from_url(self, url):
@@ -566,14 +563,28 @@ class Slide(models.Model):
     def _parse_google_document(self, document_id, only_preview_fields):
         def get_slide_type(vals):
             # TDE FIXME: WTF ??
-            image = Image.open(io.BytesIO(vals['image'].decode('base64')))
-            width, height = image.size
-            if height > width:
-                return 'document'
-            else:
-                return 'presentation'
-        key = self.env['ir.config_parameter'].sudo().get_param('website_slides.google_app_key')
-        fetch_res = self._fetch_data('https://www.googleapis.com/drive/v2/files/%s' % document_id, {'projection': 'BASIC', 'key': key}, "json")
+            slide_type = 'presentation'
+            if vals.get('image'):
+                image = Image.open(io.BytesIO(vals['image'].decode('base64')))
+                width, height = image.size
+                if height > width:
+                    return 'document'
+            return slide_type
+
+        # Google drive doesn't use a simple API key to access the data, but requires an access
+        # token. However, this token is generated in module google_drive, which is not in the
+        # dependencies of website_slides. We still keep the 'key' parameter just in case, but that
+        # is probably useless.
+        params = {}
+        params['projection'] = 'BASIC'
+        if 'google.drive.config' in self.env:
+            access_token = self.env['google.drive.config'].get_access_token()
+            if access_token:
+                params['access_token'] = access_token
+        if not params.get('access_token'):
+            params['key'] = self.env['ir.config_parameter'].sudo().get_param('website_slides.google_app_key')
+
+        fetch_res = self._fetch_data('https://www.googleapis.com/drive/v2/files/%s' % document_id, params, "json")
         if fetch_res.get('error'):
             return fetch_res
 
@@ -596,12 +607,14 @@ class Slide(models.Model):
             values['datas'] = values['image']
             values['slide_type'] = 'infographic'
         elif google_values['mimeType'].startswith('application/vnd.google-apps'):
-            values['datas'] = self._fetch_data(google_values['exportLinks']['application/pdf'], {}, 'pdf')['values']
             values['slide_type'] = get_slide_type(values)
-            if google_values['exportLinks'].get('text/plain'):
-                values['index_content'] = self._fetch_data(google_values['exportLinks']['text/plain'], {})['values']
-            if google_values['exportLinks'].get('text/csv'):
-                values['index_content'] = self._fetch_data(google_values['exportLinks']['text/csv'], {})['values']
+            if 'exportLinks' in google_values:
+                values['datas'] = self._fetch_data(google_values['exportLinks']['application/pdf'], params, 'pdf', extra_params=True)['values']
+                # Content indexing
+                if google_values['exportLinks'].get('text/plain'):
+                    values['index_content'] = self._fetch_data(google_values['exportLinks']['text/plain'], params, extra_params=True)['values']
+                elif google_values['exportLinks'].get('text/csv'):
+                    values['index_content'] = self._fetch_data(google_values['exportLinks']['text/csv'], params, extra_params=True)['values']
         elif google_values['mimeType'] == 'application/pdf':
             # TODO: Google Drive PDF document doesn't provide plain text transcript
             values['datas'] = self._fetch_data(google_values['webContentLink'], {}, 'pdf')['values']

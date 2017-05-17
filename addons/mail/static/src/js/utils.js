@@ -2,19 +2,17 @@ odoo.define('mail.utils', function (require) {
 "use strict";
 
 var bus = require('bus.bus').bus;
-var session = require('web.session');
-var web_client = require('web.web_client');
 
 
-function send_notification(title, content) {
-    if (Notification && Notification.permission === "granted") {
+function send_notification(widget, title, content) {
+    if (window.Notification && Notification.permission === "granted") {
         if (bus.is_master) {
             _send_native_notification(title, content);
         }
     } else {
-        web_client.do_notify(title, content);
+        widget.do_notify(title, content);
         if (bus.is_master) {
-            _beep();
+            _beep(widget);
         }
     }
 }
@@ -34,10 +32,11 @@ var _beep = (function () {
         return function () {};
     }
     var audio;
-    return function () {
+    return function (widget) {
         if (!audio) {
             audio = new Audio();
             var ext = audio.canPlayType("audio/ogg; codecs=vorbis") ? ".ogg" : ".mp3";
+            var session = widget.getSession();
             audio.src = session.url("/mail/static/src/audio/ting" + ext);
         }
         audio.play();
@@ -59,14 +58,26 @@ function _parse_and_transform(nodes, transform_function) {
     }).join("");
 }
 
-// suggested regexp (gruber url matching regexp, adapted to js, see https://gist.github.com/gruber/8891611)
-var url_regexp = /\b((?:https?:\/\/|www\d{0,3}[.]|[a-z0-9.\-]+[.][a-z]{2,4}\/)(?:[^\s()<>]+|\(([^\s()<>]+|(\([^\s()<>]+\)))*\))+(?:\(([^\s()<>]+|(\([^\s()<>]+\)))*\)|[^\s`!()\[\]{};:'".,<>?«»“”‘’]))/gi;
+// Suggested URL Javascript regex of http://stackoverflow.com/questions/3809401/what-is-a-good-regular-expression-to-match-a-url
+// Adapted to make http(s):// not required if (and only if) www. is given. So `should.notmatch` does not match.
+var url_regexp = /\b(?:https?:\/\/|(www\.))[-a-zA-Z0-9@:%._\+~#=]{2,256}\.[a-z]{2,13}\b([-a-zA-Z0-9@:%_\+.~#?&//=]*)/gi;
+function linkify(text, attrs) {
+    attrs = attrs || {};
+    if (attrs.target === undefined) {
+        attrs.target = '_blank';
+    }
+    attrs = _.map(attrs, function (value, key) {
+        return key + '="' + _.escape(value) + '"';
+    }).join(' ');
+    return text.replace(url_regexp, function (url) {
+        var href = (!/^(f|ht)tps?:\/\//i.test(url)) ? "http://" + url : url;
+        return '<a ' + attrs + ' href="' + href + '">' + url + '</a>';
+    });
+}
+
 function add_link (node, transform_children) {
     if (node.nodeType === 3) {  // text node
-        return node.data.replace(url_regexp, function (url) {
-            var href = (!/^(f|ht)tps?:\/\//i.test(url)) ? "http://" + url : url;
-            return '<a target="_blank" href="' + href + '">' + url + '</a>';
-        });
+        return linkify(node.data);
     }
     if (node.tagName === "A") return node.outerHTML;
     node.innerHTML = transform_children();
@@ -119,7 +130,6 @@ var accented_letters_mapping = {
     'oe': 'œ',
     'u': '[ùúûűü]',
     'y': '[ýÿ]',
-    ' ': '[()\\[\\]]',
 };
 function unaccent (str) {
     _.each(accented_letters_mapping, function (value, key) {
@@ -132,6 +142,7 @@ return {
     send_notification: send_notification,
     parse_and_transform: parse_and_transform,
     add_link: add_link,
+    linkify: linkify,
     strip_html: strip_html,
     inline: inline,
     parse_email: parse_email,

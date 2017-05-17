@@ -1,12 +1,14 @@
 # -*- coding: utf-8 -*-
 # Part of Odoo. See LICENSE file for full copyright and licensing details.
 
+import json
 import locale
 import logging
 import re
 from operator import itemgetter
 
 from odoo import api, fields, models, tools, _
+from odoo.tools import pycompat
 from odoo.tools.safe_eval import safe_eval
 from odoo.exceptions import UserError, ValidationError
 
@@ -21,7 +23,7 @@ class Lang(models.Model):
     _description = "Languages"
     _order = "active desc,name"
 
-    _disallowed_datetime_patterns = tools.DATETIME_FORMATS_MAP.keys()
+    _disallowed_datetime_patterns = list(tools.DATETIME_FORMATS_MAP)
     _disallowed_datetime_patterns.remove('%y') # this one is in fact allowed, just not good practice
 
     name = fields.Char(required=True)
@@ -69,7 +71,7 @@ class Lang(models.Model):
                     'Provided as the thousand separator in each case.')
         for lang in self:
             try:
-                if not all(isinstance(x, int) for x in safe_eval(lang.grouping)):
+                if not all(isinstance(x, int) for x in json.loads(lang.grouping)):
                     raise ValidationError(warning)
             except Exception:
                 raise ValidationError(warning)
@@ -124,7 +126,7 @@ class Lang(models.Model):
             # For some locales, nl_langinfo returns a D_FMT/T_FMT that contains
             # unsupported '%-' patterns, e.g. for cs_CZ
             format = format.replace('%-', '%')
-            for pattern, replacement in tools.DATETIME_FORMATS_MAP.iteritems():
+            for pattern, replacement in pycompat.items(tools.DATETIME_FORMATS_MAP):
                 format = format.replace(pattern, replacement)
             return str(format)
 
@@ -215,10 +217,20 @@ class Lang(models.Model):
         lang_codes = self.mapped('code')
         if 'code' in vals and any(code != vals['code'] for code in lang_codes):
             raise UserError(_("Language code cannot be modified."))
-        if vals.get('active') == False and self.env['res.users'].search([('lang', 'in', lang_codes)]):
-            raise UserError(_("Cannot unactivate a language that is currently used by users."))
+        if vals.get('active') == False:
+            if self.env['res.users'].search([('lang', 'in', lang_codes)]):
+                raise UserError(_("Cannot unactivate a language that is currently used by users."))
+            # delete linked ir.value specifying default partner's language
+            default_lang = self.env['ir.values'].search([
+                ('key', '=', 'default'),
+                ('name', '=', 'lang'),
+                ('model', '=', 'res.partner')])
+            if default_lang and default_lang.value_unpickle in lang_codes:
+                default_lang.unlink()
+
+        res = super(Lang, self).write(vals)
         self.clear_caches()
-        return super(Lang, self).write(vals)
+        return res
 
     @api.multi
     def unlink(self):
@@ -250,7 +262,7 @@ class Lang(models.Model):
 
             if percent[-1] in 'eEfFgG':
                 parts = formatted.split('.')
-                parts[0], _ = intersperse(parts[0], eval_lang_grouping, thousands_sep)
+                parts[0] = intersperse(parts[0], eval_lang_grouping, thousands_sep)[0]
 
                 formatted = decimal_point.join(parts)
 
@@ -307,5 +319,5 @@ def intersperse(string, counts, separator=''):
     left, rest, right = intersperse_pat.match(string).groups()
     def reverse(s): return s[::-1]
     splits = split(reverse(rest), counts)
-    res = separator.join(map(reverse, reverse(splits)))
+    res = separator.join(reverse(s) for s in reverse(splits))
     return left + res + right, len(splits) > 0 and len(splits) -1 or 0

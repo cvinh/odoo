@@ -2,12 +2,17 @@
 # Part of Odoo. See LICENSE file for full copyright and licensing details.
 
 from functools import partial
-from itertools import izip_longest
+try:
+    from itertools import zip_longest as izip_longuest
+except ImportError:
+    from itertools import izip_longest
 
 from lxml import etree
 from lxml.builder import E
 from psycopg2 import IntegrityError
 
+from odoo.osv.orm import modifiers_tests
+from odoo.exceptions import ValidationError
 from odoo.tests import common
 from odoo.tools import mute_logger
 
@@ -231,6 +236,24 @@ class TestViewInheritance(ViewCase):
         self.assertFalse(self.View.default_view(model='does.not.exist', view_type='form'))
         self.assertFalse(self.View.default_view(model=self.model, view_type='graph'))
 
+    def test_no_recursion(self):
+        r1 = self.makeView('R1')
+        with self.assertRaises(ValidationError), self.cr.savepoint():
+            r1.write({'inherit_id': r1.id})
+
+        r2 = self.makeView('R2', r1.id)
+        r3 = self.makeView('R3', r2.id)
+        with self.assertRaises(ValidationError), self.cr.savepoint():
+            r2.write({'inherit_id': r3.id})
+
+        with self.assertRaises(ValidationError), self.cr.savepoint():
+            r1.write({'inherit_id': r3.id})
+
+        with self.assertRaises(ValidationError), self.cr.savepoint():
+            r1.write({
+                'inherit_id': r1.id,
+                'arch': self.arch_for('itself', parent=True),
+            })
 
 class TestApplyInheritanceSpecs(ViewCase):
     """ Applies a sequence of inheritance specification nodes to a base
@@ -618,7 +641,7 @@ class TestViews(ViewCase):
         kw.setdefault('mode', 'extension' if kw.get('inherit_id') else 'primary')
         kw.setdefault('active', True)
 
-        keys = sorted(kw.keys())
+        keys = sorted(kw)
         fields = ','.join('"%s"' % (k.replace('"', r'\"'),) for k in keys)
         params = ','.join('%%(%s)s' % (k,) for k in keys)
 
@@ -736,6 +759,66 @@ class TestViews(ViewCase):
                 ),
                 string="Replacement title", version="7.0"))
 
+    def test_view_inheritance_text_inside(self):
+        """ Test view inheritance when adding elements and text. """
+        view1 = self.View.create({
+            'name': "alpha",
+            'model': 'ir.ui.view',
+            'arch': '<form string="F">(<div/>)</form>',
+        })
+        view2 = self.View.create({
+            'name': "beta",
+            'model': 'ir.ui.view',
+            'inherit_id': view1.id,
+            'arch': '<div position="inside">a<p/>b<p/>c</div>',
+        })
+        view = self.View.with_context(check_view_ids=view2.ids).fields_view_get(view1.id)
+        self.assertEqual(view['type'], 'form')
+        self.assertEqual(
+            view['arch'],
+            '<form string="F">(<div>a<p/>b<p/>c</div>)</form>',
+        )
+
+    def test_view_inheritance_text_after(self):
+        """ Test view inheritance when adding elements and text. """
+        view1 = self.View.create({
+            'name': "alpha",
+            'model': 'ir.ui.view',
+            'arch': '<form string="F">(<div/>)</form>',
+        })
+        view2 = self.View.create({
+            'name': "beta",
+            'model': 'ir.ui.view',
+            'inherit_id': view1.id,
+            'arch': '<div position="after">a<p/>b<p/>c</div>',
+        })
+        view = self.View.with_context(check_view_ids=view2.ids).fields_view_get(view1.id)
+        self.assertEqual(view['type'], 'form')
+        self.assertEqual(
+            view['arch'],
+            '<form string="F">(<div/>a<p/>b<p/>c)</form>',
+        )
+
+    def test_view_inheritance_text_before(self):
+        """ Test view inheritance when adding elements and text. """
+        view1 = self.View.create({
+            'name': "alpha",
+            'model': 'ir.ui.view',
+            'arch': '<form string="F">(<div/>)</form>',
+        })
+        view2 = self.View.create({
+            'name': "beta",
+            'model': 'ir.ui.view',
+            'inherit_id': view1.id,
+            'arch': '<div position="before">a<p/>b<p/>c</div>',
+        })
+        view = self.View.with_context(check_view_ids=view2.ids).fields_view_get(view1.id)
+        self.assertEqual(view['type'], 'form')
+        self.assertEqual(
+            view['arch'],
+            '<form string="F">(a<p/>b<p/>c<div/>)</form>',
+        )
+
     def test_view_inheritance_divergent_models(self):
         view1 = self.View.create({
             'name': "bob",
@@ -796,6 +879,10 @@ class TestViews(ViewCase):
                     E.button(name="action_next", type="object", string="New button")),
                 string="Replacement title", version="7.0"
             ))
+
+    def test_modifiers(self):
+        # implemeted elsewhere...
+        modifiers_tests()
 
 
 class ViewModeField(ViewCase):
@@ -1183,3 +1270,70 @@ class TestXPathExtentions(common.BaseCase):
         self.assertEqual(
             len(tree.xpath('//node[hasclass("foo", "baz")]')),
             1)
+
+
+class TestQWebRender(ViewCase):
+
+    def test_render(self):
+        view1 = self.View.create({
+            'name': "dummy",
+            'type': 'qweb',
+            'arch': """
+                <t t-name="base.dummy">
+                    <div><span>something</span></div>
+                </t>
+        """
+        })
+        view2 = self.View.create({
+            'name': "dummy_ext",
+            'type': 'qweb',
+            'inherit_id': view1.id,
+            'arch': """
+                <xpath expr="//div" position="inside">
+                    <span>another thing</span>
+                </xpath>
+            """
+        })
+        view3 = self.View.create({
+            'name': "dummy_primary_ext",
+            'type': 'qweb',
+            'inherit_id': view1.id,
+            'mode': 'primary',
+            'arch': """
+                <xpath expr="//div" position="inside">
+                    <span>another primary thing</span>
+                </xpath>
+            """
+        })
+
+        # render view and child view with an id
+        content1 = self.env['ir.qweb'].with_context(check_view_ids=[view1.id, view2.id]).render(view1.id)
+        content2 = self.env['ir.qweb'].with_context(check_view_ids=[view1.id, view2.id]).render(view2.id)
+
+        self.assertEqual(content1, content2)
+
+        # render view and child view with an xmlid
+        self.env.cr.execute("INSERT INTO ir_model_data(name, model, res_id, module)"
+                            "VALUES ('dummy', 'ir.ui.view', %s, 'base')" % view1.id)
+        self.env.cr.execute("INSERT INTO ir_model_data(name, model, res_id, module)"
+                            "VALUES ('dummy_ext', 'ir.ui.view', %s, 'base')" % view2.id)
+
+        content1 = self.env['ir.qweb'].with_context(check_view_ids=[view1.id, view2.id]).render('base.dummy')
+        content2 = self.env['ir.qweb'].with_context(check_view_ids=[view1.id, view2.id]).render('base.dummy_ext')
+
+        self.assertEqual(content1, content2)
+
+        # render view and primary extension with an id
+        content1 = self.env['ir.qweb'].with_context(check_view_ids=[view1.id, view2.id, view3.id]).render(view1.id)
+        content3 = self.env['ir.qweb'].with_context(check_view_ids=[view1.id, view2.id, view3.id]).render(view3.id)
+
+        self.assertNotEqual(content1, content3)
+
+        # render view and primary extension with an xmlid
+        self.env.cr.execute("INSERT INTO ir_model_data(name, model, res_id, module)"
+                            "VALUES ('dummy_primary_ext', 'ir.ui.view', %s, 'base')" % view3.id)
+
+        content1 = self.env['ir.qweb'].with_context(check_view_ids=[view1.id, view2.id, view3.id]).render('base.dummy')
+        content3 = self.env['ir.qweb'].with_context(check_view_ids=[view1.id, view2.id, view3.id]).render('base.dummy_primary_ext')
+
+        self.assertNotEqual(content1, content3)

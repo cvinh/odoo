@@ -50,15 +50,13 @@ class AccountInvoiceReport(models.Model):
     type = fields.Selection([
         ('out_invoice', 'Customer Invoice'),
         ('in_invoice', 'Vendor Bill'),
-        ('out_refund', 'Customer Refund'),
-        ('in_refund', 'Vendor Refund'),
+        ('out_refund', 'Customer Credit Note'),
+        ('in_refund', 'Vendor Credit Note'),
         ], readonly=True)
     state = fields.Selection([
         ('draft', 'Draft'),
-        ('proforma', 'Pro-forma'),
-        ('proforma2', 'Pro-forma'),
         ('open', 'Open'),
-        ('paid', 'Done'),
+        ('paid', 'Paid'),
         ('cancel', 'Cancelled')
         ], string='Invoice Status', readonly=True)
     date_due = fields.Date(string='Due Date', readonly=True)
@@ -110,7 +108,7 @@ class AccountInvoiceReport(models.Model):
                     1 AS nbr,
                     ai.type, ai.state, pt.categ_id, ai.date_due, ai.account_id, ail.account_id AS account_line_id,
                     ai.partner_bank_id,
-                    SUM ((invoice_type.sign * ail.quantity) / (u.factor * u2.factor)) AS product_qty,
+                    SUM ((invoice_type.sign * ail.quantity) / u.factor * u2.factor) AS product_qty,
                     SUM(ail.price_subtotal_signed) AS price_total,
                     SUM(ABS(ail.price_subtotal_signed)) / CASE
                             WHEN SUM(ail.quantity / u.factor * u2.factor) <> 0::numeric
@@ -134,7 +132,7 @@ class AccountInvoiceReport(models.Model):
                 LEFT JOIN product_uom u ON u.id = ail.uom_id
                 LEFT JOIN product_uom u2 ON u2.id = pt.uom_id
                 JOIN (
-                    -- Temporary table to decide if the qty should be added or retrieved (Invoice vs Refund) 
+                    -- Temporary table to decide if the qty should be added or retrieved (Invoice vs Credit Note)
                     SELECT id,(CASE
                          WHEN ai.type::text = ANY (ARRAY['out_refund'::character varying::text, 'in_invoice'::character varying::text])
                             THEN -1

@@ -60,8 +60,10 @@ class StockMove(models.Model):
     def copy(self, default=None):
         self.ensure_one()
         default = default or {}
-        if not default.get('split_from'):
-            #we don't want to propagate the link to the purchase order line except in case of move split
+        # we don't want to propagate the link to the purchase order line on the move copied,
+        # except when it's a split or a returned move
+
+        if not default.get('split_from') and not default.get('origin_returned_move_id'):
             default['purchase_line_id'] = False
         return super(StockMove, self).copy(default)
 
@@ -124,11 +126,11 @@ class StockWarehouse(models.Model):
         return routes
 
     @api.multi
-    def _update_name_and_code(self, name, code):
+    def _update_name_and_code(self, name=False, code=False):
         res = super(StockWarehouse, self)._update_name_and_code(name, code)
         warehouse = self[0]
         #change the buy procurement rule name
-        if warehouse.buy_pull_id:
+        if warehouse.buy_pull_id and name:
             warehouse.buy_pull_id.write({'name': warehouse.buy_pull_id.name.replace(warehouse.name, name, 1)})
         return res
 

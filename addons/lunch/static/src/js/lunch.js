@@ -1,56 +1,94 @@
 odoo.define('lunch.previous_orders', function (require) {
 "use strict";
 
+var AbstractField = require('web.AbstractField');
 var core = require('web.core');
-var form_common = require('web.form_common');
-var formats = require('web.formats');
-var Model = require('web.Model');
+var field_registry = require('web.field_registry');
+var field_utils = require('web.field_utils');
 
 var QWeb = core.qweb;
 
-var LunchPreviousOrdersWidget = form_common.AbstractField.extend({
+var LunchPreviousOrdersWidget = AbstractField.extend({
     events: {
-        'click .o_add_button': 'add_order_line',
+        'click .o_add_button': '_onAddOrder',
     },
-    render_value: function() {
-        this.lunch_data = JSON.parse(this.get('value'));
-        if (this.lunch_data !== false) {
-            // Similar to format_value of FieldMonetary
-            _.each(this.lunch_data, function(k, v) {
-                k.price_format = formats.format_value(k.price, {type: "float", digits: k.digits});
-            });
+    supportedFieldTypes: ['one2many'],
+    /**
+     * @override
+     */
+    init: function () {
+        this._super.apply(this, arguments);
+        this.lunchData = JSON.parse(this.value);
+    },
 
-            // Group data by supplier for display
-            var categories = _.groupBy(this.lunch_data, function(p) {
-                return p['supplier'];
-            });
-            this.$el.html(QWeb.render('LunchPreviousOrdersWidgetList', {'categories': categories}));
+    //--------------------------------------------------------------------------
+    // Private
+    //--------------------------------------------------------------------------
+
+    /**
+     * Used by the widget to render the previous order price like a monetary.
+     *
+     * @private
+     * @param {Object} order
+     * @returns {string} the monetary formatting of order price
+     */
+    _formatValue: function (order) {
+        var options = _.extend({}, this.nodeOptions, order);
+        return field_utils.format.monetary(order.price, this.field, options);
+    },
+    /**
+     * @private
+     * @override
+     */
+    _render: function () {
+        if (this.lunchData !== false) {
+            // group data by supplier for display
+            var categories = _.groupBy(this.lunchData, 'supplier');
+            this.$el.html(QWeb.render('LunchPreviousOrdersWidgetList', {
+                formatValue: this._formatValue.bind(this),
+                categories: categories,
+            }));
         } else {
             return this.$el.html(QWeb.render('LunchPreviousOrdersWidgetNoOrder'));
         }
     },
-    add_order_line: function(event) {
+
+    //--------------------------------------------------------------------------
+    // Handlers
+    //--------------------------------------------------------------------------
+
+    /**
+     * @private
+     * @param {MouseEvent} event
+     */
+    _onAddOrder: function (event) {
         // Get order details from line
-        var line_id = parseInt($(event.currentTarget).data('id'));
-        if (!line_id) {
+        var lineID = parseInt($(event.currentTarget).data('id'));
+        if (!lineID) {
             return;
         }
         var values = {
-            'product_id': this.lunch_data[line_id].product_id,
-            'note': this.lunch_data[line_id].note,
-            'price': this.lunch_data[line_id].price,
-        }
+            product_id: {
+                id: this.lunchData[lineID].product_id,
+                display_name: this.lunchData[lineID].product_name,
+            },
+            note: this.lunchData[lineID].note,
+            price: this.lunchData[lineID].price,
+        };
 
-        // Create new order line and reload view
-        var order_line_ids = this.field_manager.fields.order_line_ids;
-        order_line_ids.data_create(values)
-            .then(function (p) {
-                order_line_ids.reload_current_view();
-            }
-        );
+        // create a new order line
+        this.trigger_up('field_changed', {
+            dataPointID: this.dataPointID,
+            changes: {
+                order_line_ids: {
+                    operation: 'CREATE',
+                    data: values,
+                },
+            },
+        });
     },
 });
 
-core.form_widget_registry.add('previous_order', LunchPreviousOrdersWidget);
+field_registry.add('previous_order', LunchPreviousOrdersWidget);
 
 });

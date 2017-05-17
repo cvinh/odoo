@@ -11,12 +11,12 @@ class ProductTemplate(models.Model):
     track_service = fields.Selection([('manual', 'Manually set quantities on order')], string='Track Service',
         help="Manually set quantities on order: Invoice based on the manually entered quantity, without creating an analytic account.\n"
              "Timesheets on contract: Invoice based on the tracked hours on the related timesheet.\n"
-             "Create a task and track hours: Create a task on the sale order validation and track the work hours.",
+             "Create a task and track hours: Create a task on the sales order validation and track the work hours.",
         default='manual')
     sale_line_warn = fields.Selection(WARNING_MESSAGE, 'Sales Order Line', help=WARNING_HELP, required=True, default="no-message")
     sale_line_warn_msg = fields.Text('Message for Sales Order Line')
     expense_policy = fields.Selection(
-        [('no', 'No'), ('cost', 'At cost'), ('sales_price', 'At sale price')],
+        [('no', 'No'), ('cost', 'At cost'), ('sales_price', 'Sales price')],
         string='Re-Invoice Expenses',
         default='no')
 
@@ -30,7 +30,7 @@ class ProductTemplate(models.Model):
     def action_view_sales(self):
         self.ensure_one()
         action = self.env.ref('sale.action_product_sale_list')
-        product_ids = self.product_variant_ids.ids
+        product_ids = self.with_context(active_test=False).product_variant_ids.ids
 
         return {
             'name': action.name,

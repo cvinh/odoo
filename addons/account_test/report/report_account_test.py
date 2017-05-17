@@ -31,8 +31,8 @@ class ReportAssertAccount(models.AbstractModel):
             :rtype: [(key, value)]
             """
             if cols is None:
-                cols = item.keys()
-            return [(col, item.get(col)) for col in cols if col in item.keys()]
+                cols = list(item)
+            return [(col, item.get(col)) for col in cols if col in item]
 
         localdict = {
             'cr': self.env.cr,
@@ -40,6 +40,7 @@ class ReportAssertAccount(models.AbstractModel):
             'reconciled_inv': reconciled_inv,  # specific function used in different tests
             'result': None,  # used to store the result of the test
             'column_order': None,  # used to choose the display order of columns (in case you are returning a list of dict)
+            '_': _,
         }
         safe_eval(code_exec, localdict, mode="exec", nocopy=True)
         result = localdict['result']
@@ -60,11 +61,10 @@ class ReportAssertAccount(models.AbstractModel):
         return result
 
     @api.model
-    def render_html(self, docids, data=None):
-        Report = self.env['report']
-        report = Report._get_report_from_name('account_test.report_accounttest')
+    def get_report_values(self, docids, data=None):
+        report = self.env['ir.actions.report']._get_report_from_name('account_test.report_accounttest')
         records = self.env['accounting.assert.test'].browse(self.ids)
-        docargs = {
+        return {
             'doc_ids': self._ids,
             'doc_model': report.model,
             'docs': records,
@@ -72,4 +72,3 @@ class ReportAssertAccount(models.AbstractModel):
             'execute_code': self.execute_code,
             'datetime': datetime
         }
-        return Report.render('account_test.report_accounttest', docargs)

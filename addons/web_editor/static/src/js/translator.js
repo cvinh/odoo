@@ -2,7 +2,6 @@ odoo.define('web_editor.translate', function (require) {
 'use strict';
 
 var core = require('web.core');
-var Model = require('web.Model');
 var ajax = require('web.ajax');
 var Widget = require('web.Widget');
 var base = require('web_editor.base');
@@ -106,7 +105,6 @@ var Translate = Widget.extend({
     template: 'web_editor.editorbar',
     init: function (parent, $target, lang) {
         this.parent = parent;
-        this.ir_translation = new Model('ir.translation');
         this.lang = lang || base.get_context().lang;
         this.setTarget($target);
         this._super.apply(this, arguments);
@@ -177,6 +175,10 @@ var Translate = Widget.extend({
     },
     rte_changed: function (node) {
         var $node = $(node);
+        $node.find("p").each(function () { // remove <p/> element which might have been inserted because of copy-paste
+            var $p = $(this);
+            $p.after($p.html()).remove();
+        });
         var trans = this.getTranlationObject($node[0]);
         $node.toggleClass('o_dirty', trans.value !== $node.html().replace(/[ \t\n\r]+/, ' '));
     },

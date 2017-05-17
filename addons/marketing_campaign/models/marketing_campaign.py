@@ -9,6 +9,7 @@ import re
 
 from odoo import api, fields, models, _
 from odoo.exceptions import UserError, ValidationError
+from odoo.tools import pycompat
 from odoo.tools.safe_eval import safe_eval
 
 import odoo.addons.decimal_precision as dp
@@ -130,8 +131,7 @@ class MarketingCampaign(models.Model):
         """Finds possible duplicates workitems for a record in this campaign, based on a uniqueness
            field.
 
-           :param record: browse_record to find duplicates workitems for.
-           :param campaign_rec: browse_record of campaign
+           :param Model record: to find duplicates workitems for.
         """
         self.ensure_one()
         duplicate_workitem_domain = [('res_id', '=', record.id), ('campaign_id', '=', self.id)]
@@ -291,7 +291,7 @@ class MarketingCampaignActivity(models.Model):
 
     name = fields.Char('Name', required=True)
     campaign_id = fields.Many2one('marketing.campaign', 'Campaign', required=True, ondelete='cascade', index=True)
-    object_id = fields.Many2one(related='campaign_id.object_id', relation='ir.model', string='Object', readonly=True)
+    object_id = fields.Many2one('ir.model', related='campaign_id.object_id', string='Object', readonly=True)
     start = fields.Boolean('Start', help="This activity is launched when the campaign starts.", index=True)
     condition = fields.Text('Condition', required=True, default="True",
         help="Python expression to decide whether the activity can be executed, otherwise it will be deleted or cancelled."
@@ -311,7 +311,7 @@ class MarketingCampaignActivity(models.Model):
              "- Report: print an existing Report defined on the resource item and save it into a specific directory \n"
              "- Custom Action: execute a predefined action, e.g. to modify the fields of the resource record")
     email_template_id = fields.Many2one('mail.template', "Email Template", help='The email to send when this activity is activated')
-    report_id = fields.Many2one('ir.actions.report.xml', "Report", help='The report to generate when this activity is activated')
+    report_id = fields.Many2one('ir.actions.report', "Report", help='The report to generate when this activity is activated')
     server_action_id = fields.Many2one('ir.actions.server', string='Action',
         help="The action to perform when this activity is activated")
     to_ids = fields.One2many('marketing.campaign.transition', 'activity_from_id', 'Next Activities')
@@ -339,6 +339,16 @@ class MarketingCampaignActivity(models.Model):
     def _process_wi_email(self, workitem):
         self.ensure_one()
         return self.email_template_id.send_mail(workitem.res_id)
+
+    @api.multi
+    def _process_wi_report(self, workitem):
+        self.ensure_one()
+        return self.report_id.render(workitem.res_id)
+
+    @api.multi
+    def _process_wi_action(self, workitem):
+        self.ensure_one()
+        return self.server_action_id.run()
 
     @api.multi
     def process(self, workitem):
@@ -416,7 +426,7 @@ class MarketingCampaignWorkitem(models.Model):
     campaign_id = fields.Many2one('marketing.campaign', related='activity_id.campaign_id', string='Campaign', readonly=True, store=True)
     object_id = fields.Many2one('ir.model', related='activity_id.campaign_id.object_id', string='Resource', index=1, readonly=True, store=True)
     res_id = fields.Integer('Resource ID', index=1, readonly=True)
-    res_name = fields.Char(compute='_compute_res_name', string='Resource Name', search='search_res_name')
+    res_name = fields.Char(compute='_compute_res_name', string='Resource Name', search='_search_res_name')
     date = fields.Datetime('Execution Date', readonly=True, default=False,
         help='If date is not set, this workitem has to be run manually')
     partner_id = fields.Many2one('res.partner', 'Partner', index=1, readonly=True)
@@ -456,10 +466,10 @@ class MarketingCampaignWorkitem(models.Model):
         matching_workitems = []
         for id, res_id, model in res:
             workitem_map.setdefault(model, {}).setdefault(res_id, set()).add(id)
-        for model, id_map in workitem_map.iteritems():
+        for model, id_map in pycompat.items(workitem_map):
             Model = self.env[model]
             condition_name[0] = Model._rec_name
-            condition = [('id', 'in', id_map.keys()), condition_name]
+            condition = [('id', 'in', list(id_map)), condition_name]
             for record in Model.search(condition):
                 matching_workitems.extend(id_map[record.id])
         return [('id', 'in', list(set(matching_workitems)))]
@@ -601,7 +611,7 @@ class MarketingCampaignWorkitem(models.Model):
                 'model': self.object_id.model
             }
             res = {
-                'type': 'ir.actions.report.xml',
+                'type': 'ir.actions.report',
                 'report_name': self.activity_id.report_id.report_name,
                 'datas': datas,
             }

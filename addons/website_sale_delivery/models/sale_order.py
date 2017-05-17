@@ -3,7 +3,6 @@
 import logging
 
 from odoo import api, fields, models, _
-from odoo.http import request
 from odoo.exceptions import ValidationError
 
 _logger = logging.getLogger(__name__)
@@ -76,11 +75,7 @@ class SaleOrder(models.Model):
         # Following loop is done to avoid displaying delivery methods who are not available for this order
         # This can surely be done in a more efficient way, but at the moment, it mimics the way it's
         # done in delivery_set method of sale.py, from delivery module
-        user = request.env.user
-        if user.has_group('website.group_website_publisher') and user.has_group('sales_team.group_sale_manager'):
-            carrier_ids = DeliveryCarrier.search([]).ids
-        else:
-            carrier_ids = DeliveryCarrier.sudo().search(
+        carrier_ids = DeliveryCarrier.sudo().search(
             [('website_published', '=', True)]).ids
         for carrier_id in carrier_ids:
             carrier = DeliveryCarrier.browse(carrier_id)
@@ -94,29 +89,6 @@ class SaleOrder(models.Model):
                 # The validation error is used in backend to display errors in fedex config, but should fail silently in frontend
                 _logger.debug("Carrier #%s removed from e-commerce carrier list. %s" % (carrier_id, e))
         return available_carriers
-
-    @api.model
-    def _get_errors(self, order):
-        errors = super(SaleOrder, self)._get_errors(order)
-        if not order._get_delivery_methods():
-            errors.append(
-                (_('Sorry, we are unable to ship your order'),
-                 _('No shipping method is available for your current order and shipping address. '
-                   'Please contact us for more information.')))
-        return errors
-
-    @api.model
-    def _get_website_data(self, order):
-        """ Override to add delivery-related website data. """
-        values = super(SaleOrder, self)._get_website_data(order)
-        # We need a delivery only if we have stockable products
-        has_stockable_products = any(order.order_line.filtered(lambda line: line.product_id.type in ['consu', 'product']))
-        if not has_stockable_products:
-            return values
-
-        delivery_carriers = order._get_delivery_methods()
-        values['deliveries'] = delivery_carriers.sudo().with_context(order_id=order.id)
-        return values
 
     @api.multi
     def _cart_update(self, product_id=None, line_id=None, add_qty=0, set_qty=0, **kwargs):

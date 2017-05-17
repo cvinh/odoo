@@ -6,6 +6,7 @@ import random
 from odoo import api, models, fields, tools, _
 from odoo.http import request
 from odoo.exceptions import UserError, ValidationError
+from odoo.tools import pycompat
 
 _logger = logging.getLogger(__name__)
 
@@ -20,7 +21,7 @@ class SaleOrder(models.Model):
     )
     cart_quantity = fields.Integer(compute='_compute_cart_info', string='Cart Quantity')
     payment_acquirer_id = fields.Many2one('payment.acquirer', string='Payment Acquirer', copy=False)
-    payment_tx_id = fields.Many2one('payment.transaction', string='Transaction', copy=False)
+    payment_tx_id = fields.Many2one('payment.transaction', string='Last Transaction', copy=False)
     only_services = fields.Boolean(compute='_compute_cart_info', string='Only Services')
 
     @api.multi
@@ -29,17 +30,6 @@ class SaleOrder(models.Model):
         for order in self:
             order.cart_quantity = int(sum(order.mapped('website_order_line.product_uom_qty')))
             order.only_services = all(l.product_id.type in ('service', 'digital') for l in order.website_order_line)
-
-    @api.model
-    def _get_errors(self, order):
-        return []
-
-    @api.model
-    def _get_website_data(self, order):
-        return {
-            'partner': order.partner_id.id,
-            'order': order
-        }
 
     @api.multi
     def _cart_find_product_line(self, product_id=None, line_id=None, **kwargs):
@@ -67,13 +57,18 @@ class SaleOrder(models.Model):
             'pricelist': order.pricelist_id.id,
         })
         product = self.env['product.product'].with_context(product_context).browse(product_id)
+        pu = product.price
+        if order.pricelist_id and order.partner_id:
+            order_line = order._cart_find_product_line(product.id)
+            if order_line:
+                pu = self.env['account.tax']._fix_tax_included_price(pu, product.taxes_id, order_line.tax_id)
 
         return {
             'product_id': product_id,
             'product_uom_qty': qty,
             'order_id': order_id,
             'product_uom': product.uom_id.id,
-            'price_unit': product.price,
+            'price_unit': pu,
         }
 
     @api.multi
@@ -90,7 +85,7 @@ class SaleOrder(models.Model):
 
         # add untracked attributes in the name
         untracked_attributes = []
-        for k, v in attributes.items():
+        for k, v in pycompat.items(attributes):
             # attribute should be like 'attribute-48-1' where 48 is the product_id, 1 is the attribute_id and v is the attribute value
             attribute_value = self.env['product.attribute.value'].sudo().browse(int(v))
             if attribute_value and not attribute_value.attribute_id.create_variant:
@@ -112,7 +107,7 @@ class SaleOrder(models.Model):
         order_line = False
         if self.state != 'draft':
             request.session['sale_order_id'] = None
-            raise UserError(_('It is forbidden to modify a sale order which is not in draft status'))
+            raise UserError(_('It is forbidden to modify a sales order which is not in draft status'))
         if line_id is not False:
             order_lines = self._cart_find_product_line(product_id, line_id, **kwargs)
             order_line = order_lines and order_lines[0]
@@ -143,11 +138,22 @@ class SaleOrder(models.Model):
         else:
             # update line
             values = self._website_product_id_change(self.id, product_id, qty=quantity)
-
-
-
             if self.pricelist_id.discount_policy == 'with_discount' and not self.env.context.get('fixed_price'):
-                values['price_unit'] = order_line._get_display_price(order_line.product_id)
+                order = self.sudo().browse(self.id)
+                product_context = dict(self.env.context)
+                product_context.setdefault('lang', order.partner_id.lang)
+                product_context.update({
+                    'partner': order.partner_id.id,
+                    'quantity': quantity,
+                    'date': order.date_order,
+                    'pricelist': order.pricelist_id.id,
+                })
+                product = self.env['product.product'].with_context(product_context).browse(product_id)
+                values['price_unit'] = self.env['account.tax']._fix_tax_included_price(
+                    order_line._get_display_price(product),
+                    order_line.product_id.taxes_id,
+                    order_line.tax_id
+                )
 
             order_line.write(values)
 
@@ -167,7 +173,7 @@ class Website(models.Model):
     pricelist_id = fields.Many2one('product.pricelist', compute='_compute_pricelist_id', string='Default Pricelist')
     currency_id = fields.Many2one('res.currency', related='pricelist_id.currency_id', string='Default Currency')
     salesperson_id = fields.Many2one('res.users', string='Salesperson')
-    salesteam_id = fields.Many2one('crm.team', string='Sales Team')
+    salesteam_id = fields.Many2one('crm.team', string='Sales Channel')
     pricelist_ids = fields.One2many('product.pricelist', compute="_compute_pricelist_ids",
                                     string='Price list available for this Ecommerce/Website')
 
@@ -211,6 +217,8 @@ class Website(models.Model):
 
         if not pricelists:  # no pricelist for this country, or no GeoIP
             pricelists |= all_pl.filtered(lambda pl: not show_visible or pl.selectable or pl.id in (current_pl, order_pl))
+        else:
+            pricelists |= all_pl.filtered(lambda pl: not show_visible and pl.code)
 
         # This method is cached, must not return records! See also #8795
         return pricelists.ids
@@ -301,14 +309,35 @@ class Website(models.Model):
         return self.env.ref(DEFAULT_PAYMENT_TERM, False).id or partner.property_payment_term_id.id
 
     @api.multi
+    def _prepare_sale_order_values(self, partner, pricelist):
+        self.ensure_one()
+        affiliate_id = request.session.get('affiliate_id')
+        salesperson_id = affiliate_id if self.env['res.users'].sudo().browse(affiliate_id).exists() else request.website.salesperson_id.id
+        addr = partner.address_get(['delivery', 'invoice'])
+        values = {
+            'partner_id': partner.id,
+            'pricelist_id': pricelist.id,
+            'payment_term_id': self.sale_get_payment_term(partner),
+            'team_id': self.salesteam_id.id,
+            'partner_invoice_id': addr['invoice'],
+            'partner_shipping_id': addr['delivery'],
+            'user_id': salesperson_id or self.salesperson_id.id,
+        }
+        company = self.company_id or pricelist.company_id
+        if company:
+            values['company_id'] = company.id
+
+        return values
+
+    @api.multi
     def sale_get_order(self, force_create=False, code=None, update_pricelist=False, force_pricelist=False):
-        """ Return the current sale order after mofications specified by params.
-        :param bool force_create: Create sale order if not already existing
+        """ Return the current sales order after mofications specified by params.
+        :param bool force_create: Create sales order if not already existing
         :param str code: Code to force a pricelist (promo code)
                          If empty, it's a special case to reset the pricelist with the first available else the default.
-        :param bool update_pricelist: Force to recompute all the lines from sale order to adapt the price with the current pricelist.
+        :param bool update_pricelist: Force to recompute all the lines from sales order to adapt the price with the current pricelist.
         :param int force_pricelist: pricelist_id - if set,  we change the pricelist with this one
-        :returns: browse record for the current sale order
+        :returns: browse record for the current sales order
         """
         self.ensure_one()
         partner = self.env.user.partner_id
@@ -335,21 +364,9 @@ class Website(models.Model):
         # create so if needed
         if not sale_order and (force_create or code):
             # TODO cache partner_id session
-            affiliate_id = request.session.get('affiliate_id')
-            if self.env['res.users'].sudo().browse(affiliate_id).exists():
-                salesperson_id = affiliate_id
-            else:
-                salesperson_id = request.website.salesperson_id.id
-            addr = partner.address_get(['delivery', 'invoice'])
-            sale_order = self.env['sale.order'].sudo().create({
-                'partner_id': partner.id,
-                'pricelist_id': pricelist_id,
-                'payment_term_id': self.sale_get_payment_term(partner),
-                'team_id': self.salesteam_id.id,
-                'partner_invoice_id': addr['invoice'],
-                'partner_shipping_id': addr['delivery'],
-                'user_id': salesperson_id or self.salesperson_id.id,
-            })
+            pricelist = self.env['product.pricelist'].browse(pricelist_id).sudo()
+            so_data = self._prepare_sale_order_values(partner, pricelist)
+            sale_order = self.env['sale.order'].sudo().create(so_data)
 
             # set fiscal position
             if request.website.partner_id.id != partner.id:
@@ -367,7 +384,7 @@ class Website(models.Model):
             request.session['sale_order_id'] = sale_order.id
 
             if request.website.partner_id.id != partner.id:
-                partner.write({'last_website_so_id': sale_order_id})
+                partner.write({'last_website_so_id': sale_order.id})
 
         if sale_order:
 
@@ -436,7 +453,15 @@ class Website(models.Model):
         tx_id = request.session.get('sale_transaction_id')
         if tx_id:
             transaction = self.env['payment.transaction'].sudo().browse(tx_id)
-            if transaction.state != 'cancel':
+            # Ugly hack for SIPS: SIPS does not allow to reuse a payment reference, even if the
+            # payment was not not proceeded. For example:
+            # - Select SIPS for payment
+            # - Be redirected to SIPS website
+            # - Go back to eCommerce without paying
+            # - Be redirected to SIPS website again => error
+            # Since there is no link module between 'website_sale' and 'payment_sips', we prevent
+            # here to reuse any previous transaction for SIPS.
+            if transaction.state != 'cancel' and transaction.acquirer_id.provider != 'sips':
                 return transaction
             else:
                 request.session['sale_transaction_id'] = False
@@ -463,4 +488,4 @@ class ResCountry(models.Model):
 class ResPartner(models.Model):
     _inherit = 'res.partner'
 
-    last_website_so_id = fields.Many2one('sale.order', string='Last Online Sale Order')
+    last_website_so_id = fields.Many2one('sale.order', string='Last Online Sales Order')

@@ -92,6 +92,21 @@
         </div>
     </t>
 
+        <t t-name="ClientScreenWidget">
+        <div class="oe_status">
+            <span class="oe_customer_display_text"></span>
+            <div class="js_warning oe_icon oe_orange oe_hidden">
+                <i class='fa fa-fw fa-desktop'></i>
+            </div>
+             <div class="js_disconnected oe_icon oe_red">
+                <i class='fa fa-fw fa-desktop'></i>
+            </div>
+            <div class="js_connected oe_icon oe_green oe_hidden">
+                <i class='fa fa-fw fa-desktop'></i>
+            </div>
+        </div>
+    </t>
+
     <t t-name="HeaderButtonWidget">
         <div class="header-button">
             <t t-esc="widget.label" />
@@ -336,7 +351,7 @@
                     </div>
                     <div class='client-detail'>
                         <span class='label'>Country</span>
-                        <select class='detail client-address-country' name='country_id'>
+                        <select class='detail client-address-country needsclick' name='country_id'>
                             <option value=''>None</option>
                             <t t-foreach='widget.pos.countries' t-as='country'>
                                 <option t-att-value='country.id' t-att-selected="partner.country_id ? ((country.id === partner.country_id[0]) ? true : undefined) : undefined"> 
@@ -738,7 +753,7 @@
                     <t t-if='simple'>
                         <line>
                             <left><t t-esc='line.product_name_wrapped[0]' /></left>
-                            <right><value><t t-esc='line.price_display' /></value></right>
+                            <right><value t-att-value-decimals='pos.currency.decimals'>><t t-esc='line.price_display' /></value></right>
                         </line>
                         <t t-call="XmlReceiptWrappedProductNameLines"/>
                     </t>
@@ -750,19 +765,19 @@
                         </t>
                         <line indent='1'>
                             <left>
-                                <value value-decimals='3' value-autoint='on'>
+                                <value t-att-value-decimals='pos.dp["Product Unit of Measure"]' value-autoint='on'>
                                     <t t-esc='line.quantity' />
                                 </value>
                                 <t t-if='line.unit_name !== "Unit(s)"'>
                                     <t t-esc='line.unit_name' /> 
                                 </t>
                                 x 
-                                <value value-decimals='2'>
+                                <value t-att-value-decimals='pos.dp["Product Price"]'>
                                     <t t-esc='line.price' />
                                 </value>
                             </left>
                             <right>
-                                <value><t t-esc='line.price_display' /></value>
+                                <value t-att-value-decimals='pos.currency.decimals'><t t-esc='line.price_display' /></value>
                             </right>
                         </line>
                     </t>
@@ -774,11 +789,11 @@
             <t t-set='taxincluded' t-value='Math.abs(receipt.subtotal - receipt.total_with_tax) &lt;= 0.000001' />
             <t t-if='!taxincluded'>
                 <line><right>--------</right></line>
-                <line><left>Subtotal</left><right> <value><t t-esc="receipt.subtotal" /></value></right></line>
+                <line><left>Subtotal</left><right><value t-att-value-decimals='pos.currency.decimals'><t t-esc="receipt.subtotal" /></value></right></line>
                 <t t-foreach='receipt.tax_details' t-as='tax'>
                     <line>
                         <left><t t-esc='tax.name' /></left>
-                        <right><value><t t-esc='tax.amount' /></value></right>
+                        <right><value t-att-value-decimals='pos.currency.decimals'><t t-esc='tax.amount' /></value></right>
                     </line>
                 </t>
             </t>
@@ -788,7 +803,7 @@
             <line><right>--------</right></line>
             <line class='total' size='double-height'>
                 <left><pre>        TOTAL</pre></left>
-                <right><value><t t-esc='receipt.total_with_tax' /></value></right>
+                <right><value t-att-value-decimals='pos.currency.decimals'><t t-esc='receipt.total_with_tax' /></value></right>
             </line>
             <br/><br/>
 
@@ -797,14 +812,14 @@
             <t t-foreach='paymentlines' t-as='line'>
                 <line>
                     <left><t t-esc='line.name' /></left>
-                    <right><value><t t-esc='line.get_amount()'/></value></right>
+                    <right><value t-att-value-decimals='pos.currency.decimals'><t t-esc='line.get_amount()'/></value></right>
                 </line>
             </t>
             <br/> 
 
             <line size='double-height'>
                 <left><pre>        CHANGE</pre></left>
-                <right><value><t t-esc='receipt.change' /></value></right>
+                <right><value t-att-value-decimals='pos.currency.decimals'><t t-esc='receipt.change' /></value></right>
             </line>
             <br/>
             
@@ -813,19 +828,19 @@
             <t t-if='receipt.total_discount'>
                 <line>
                     <left>Discounts</left>
-                    <right><value><t t-esc='receipt.total_discount'/></value></right>
+                    <right><value t-att-value-decimals='pos.currency.decimals'><t t-esc='receipt.total_discount'/></value></right>
                 </line>
             </t>
             <t t-if='taxincluded'>
                 <t t-foreach='receipt.tax_details' t-as='tax'>
                     <line>
                         <left><t t-esc='tax.name' /></left>
-                        <right><value><t t-esc='tax.amount' /></value></right>
+                        <right><value t-att-value-decimals='pos.currency.decimals'><t t-esc='tax.amount' /></value></right>
                     </line>
                 </t>
                 <line>
                     <left>Total Taxes</left>
-                    <right><value><t t-esc='receipt.total_tax'/></value></right>
+                    <right><value t-att-value-decimals='pos.currency.decimals'><t t-esc='receipt.total_tax'/></value></right>
                 </line>
             </t>
 
@@ -975,6 +990,9 @@
                     <div class="button cancel">
                         Ok
                     </div>
+                    <a><div class="button icon download_error_file oe_hidden">
+                        <i class="fa fa-arrow-down"></i>
+                    </div></a>
                     <div class="button icon download">
                         <i class="fa fa-download"></i>
                     </div>
@@ -1308,7 +1326,9 @@
                     <li class="button delete_orders">Delete Paid Orders</li>
                     <li class="button delete_unpaid_orders">Delete Unpaid Orders</li>
                     <li class="button export_paid_orders">Export Paid Orders</li>
+                    <a><li class="button download_paid_orders oe_hidden">Download Paid Orders</li></a>
                     <li class="button export_unpaid_orders">Export Unpaid Orders</li>
+                    <a><li class="button download_unpaid_orders oe_hidden">Download Unpaid Orders</li></a>
                     <li class="button import_orders" style="position:relative">
                         Import Orders
                         <input type="file" style="opacity:0;position:absolute;top:0;left:0;right:0;bottom:0;margin:0;cursor:pointer"/>
@@ -1318,6 +1338,7 @@
                 <p class="category">Hardware Status</p>
                 <ul>
                     <li class="status weighing">Weighing</li>
+                    <li class="button display_refresh">Refresh Display</li>
                 </ul>
                 <p class="category">Hardware Events</p>
                 <ul>
@@ -1595,4 +1616,53 @@
         </div>
     </t>
 
+<!-- This is a duplicate of xml_id = point_of_sale.extra_head . We could have told models.js to do an extra rpc call for this-->
+    <t t-name="CustomerFacingDisplayHead">
+        <div class="resources">
+            <base t-att-href="origin"/>
+            <link href="/point_of_sale/static/src/css/customer_facing_display.css" rel="stylesheet"/>
+            <script type="text/javascript">
+                // This function needs to be named that way, call it the foreign JS API
+                // The posbox will execute it, with the behavior intended
+                function foreign_js(){
+                    if ($('.pos-adv').hasClass('pos-hidden')) {
+                        $('.pos-customer_facing_display').addClass('pos-js_no_ADV');
+                    }
+                    $(window).on('resize', function () {
+                        $('.pos-customer_facing_display').toggleClass('pos-js_no_ADV', $('.pos-adv').hasClass('pos-hidden'));
+                    }).trigger('resize');
+                };
+            </script>
+        </div>
+    </t>
+
+    <t t-name="CustomerFacingDisplayOrderLines">
+        <t t-foreach="orderlines" t-as="orderline">
+            <div class="pos_orderlines_item">
+                <div><div t-attf-style="background-image:url(#{orderline.product.image_base64})"/></div>
+                    <div><t t-esc="orderline.product.display_name" /></div>
+                    <div><t t-esc="orderline.get_quantity_str()" /></div>
+                    <div><t t-esc="widget.format_currency(orderline.get_display_price())"/></div>
+            </div>
+        </t>
+    </t>
+
+    <t t-name="CustomerFacingDisplayPaymentLines">
+        <t t-foreach="order.get_paymentlines()" t-as="paymentline">
+            <div>
+                <span><t t-esc="paymentline.name"/></span>
+            </div>
+            <div>
+                <span><t t-esc="widget.format_currency(paymentline.get_amount())"/></span>
+            </div>
+        </t>
+        <t t-if="order.get_paymentlines().length > 0">
+            <div>
+                <span class="pos-change_title">Change:</span>
+            </div>
+            <div >
+                <span class="pos-change_amount"><t t-esc="widget.format_currency(order.get_change())"/></span>
+            </div>
+        </t>
+    </t>
 </templates>

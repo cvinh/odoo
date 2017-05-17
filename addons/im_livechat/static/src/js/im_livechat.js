@@ -1,6 +1,7 @@
 odoo.define('im_livechat.im_livechat', function (require) {
 "use strict";
 
+var local_storage = require('web.local_storage');
 var bus = require('bus.bus').bus;
 var config = require('web.config');
 var core = require('web.core');
@@ -13,6 +14,26 @@ var ChatWindow = require('mail.ChatWindow');
 
 var _t = core._t;
 var QWeb = core.qweb;
+
+// Constants
+var LIVECHAT_COOKIE_HISTORY = 'im_livechat_history';
+var HISTORY_LIMIT = 15;
+
+// History tracking
+var page = window.location.href.replace(/^.*\/\/[^\/]+/, '');
+var page_history = utils.get_cookie(LIVECHAT_COOKIE_HISTORY);
+var url_history = [];
+if(page_history){
+    url_history = JSON.parse(page_history) || [];
+}
+if (!_.contains(url_history, page)) {
+    url_history.push(page);
+    while (url_history.length > HISTORY_LIMIT) {
+        url_history.shift();
+    }
+    utils.set_cookie(LIVECHAT_COOKIE_HISTORY, JSON.stringify(url_history), 60*60*24); // 1 day cookie
+}
+
 
 var LivechatButton = Widget.extend({
     className:"openerp o_livechat_button hidden-print",
@@ -32,6 +53,7 @@ var LivechatButton = Widget.extend({
         this.channel = null;
         this.chat_window = null;
         this.messages = [];
+        this.server_url = server_url;
     },
 
     willStart: function () {
@@ -47,7 +69,7 @@ var LivechatButton = Widget.extend({
             });
         } else {
             var channel = JSON.parse(cookie);
-            ready = session.rpc("/im_livechat/history", {channel_id: channel.id, limit: 100}).then(function (history) {
+            ready = session.rpc("/mail/chat_history", {uuid: channel.uuid, limit: 100}).then(function (history) {
                 self.history = history;
             });
         }
@@ -69,29 +91,40 @@ var LivechatButton = Widget.extend({
         bus.on('notification', this, function (notifications) {
             var self = this;
             _.each(notifications, function (notification) {
-                if (self.channel && (notification[0] === self.channel.uuid)) {
-                    self.add_message(notification[1]);
-                    self.render_messages();
-                    if (self.chat_window.folded || !self.chat_window.thread.is_at_bottom()) {
-                        self.chat_window.update_unread(self.chat_window.unread_msgs+1);
-                    }
-                }
+                self._on_notification(notification);
             });
         });
         return this._super();
     },
-
+    _on_notification: function(notification){
+        if (this.channel && (notification[0] === this.channel.uuid)) {
+            if(notification[1]._type === "history_command") { // history request
+                var cookie = utils.get_cookie(LIVECHAT_COOKIE_HISTORY);
+                var history = cookie ? JSON.parse(cookie) : [];
+                session.rpc("/im_livechat/history", {
+                    pid: this.channel.operator_pid[0],
+                    channel_uuid: this.channel.uuid,
+                    page_history: history,
+                });
+            }else{ // normal message
+                this.add_message(notification[1]);
+                this.render_messages();
+                if (this.chat_window.folded || !this.chat_window.thread.is_at_bottom()) {
+                    this.chat_window.update_unread(this.chat_window.unread_msgs+1);
+                }
+            }
+        }
+    },
     load_qweb_template: function(){
-        return $.when(
-            $.get('/mail/static/src/xml/chat_window.xml'),
-            $.get('/mail/static/src/xml/thread.xml'),
-            $.get('/im_livechat/static/src/xml/im_livechat.xml')
-        ).then(function (chat_window, mail_thread, livechat) {
-            // results are triplets of [dom: XMLDocument, status: String, xhr: jqXHR]
-            QWeb.add_template(chat_window[0]);
-            QWeb.add_template(mail_thread[0]);
-            QWeb.add_template(livechat[0]);
+        var xml_files = ['/mail/static/src/xml/chat_window.xml',
+                         '/mail/static/src/xml/thread.xml',
+                         '/im_livechat/static/src/xml/im_livechat.xml'];
+        var defs = _.map(xml_files, function (tmpl) {
+            return session.rpc('/web/proxy/load', {path: tmpl}).then(function (xml) {
+                QWeb.add_template(xml);
+            });
         });
+        return $.when.apply($, defs);
     },
 
     open_chat: _.debounce(function () {
@@ -204,10 +237,11 @@ var LivechatButton = Widget.extend({
                                this.options.default_username;
 
         // Compute the avatar_url
+        msg.avatar_src = this.server_url;
         if (msg.author_id && msg.author_id[0]) {
-            msg.avatar_src = "/web/image/res.partner/" + msg.author_id[0] + "/image_small";
+            msg.avatar_src += "/web/image/res.partner/" + msg.author_id[0] + "/image_small";
         } else {
-            msg.avatar_src = "/mail/static/src/img/smiley/avatar.jpg";
+            msg.avatar_src += "/mail/static/src/img/smiley/avatar.jpg";
         }
 
         if (options && options.prepend) {

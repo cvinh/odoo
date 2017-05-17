@@ -13,7 +13,7 @@ class StockWarehouse(models.Model):
     manufacture_pull_id = fields.Many2one(
         'procurement.rule', 'Manufacture Rule')
     manu_type_id = fields.Many2one(
-        'stock.picking.type', 'Manufacturing Picking Type',
+        'stock.picking.type', 'Manufacturing Operation Type',
         domain=[('code', '=', 'mrp_operation')])
 
     def create_sequences_and_picking_types(self):
@@ -58,7 +58,7 @@ class StockWarehouse(models.Model):
             wh_stock_loc = warehouse.lot_stock_id
             seq = seq_obj.search([('code', '=', 'mrp.production')], limit=1)
             other_pick_type = picking_type_obj.search([('warehouse_id', '=', warehouse.id)], order = 'sequence desc', limit=1)
-            color = other_pick_type and other_pick_type.color or 0
+            color = other_pick_type and other_pick_type.color or 1
             max_sequence = other_pick_type and other_pick_type.sequence or 0
             manu_type = picking_type_obj.create({
                 'name': _('Manufacturing'),
@@ -118,10 +118,10 @@ class StockWarehouse(models.Model):
         return routes
 
     @api.multi
-    def _update_name_and_code(self, name, code):
+    def _update_name_and_code(self, name=False, code=False):
         res = super(StockWarehouse, self)._update_name_and_code(name, code)
         # change the manufacture procurement rule name
         for warehouse in self:
-            if warehouse.manufacture_pull_id:
+            if warehouse.manufacture_pull_id and name:
                 warehouse.manufacture_pull_id.write({'name': warehouse.manufacture_pull_id.name.replace(warehouse.name, name, 1)})
         return res

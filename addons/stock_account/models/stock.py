@@ -5,7 +5,7 @@ from collections import defaultdict
 
 from odoo import api, fields, models, _
 from odoo.exceptions import UserError
-from odoo.tools import float_compare, float_round
+from odoo.tools import float_compare, float_round, pycompat
 
 import logging
 _logger = logging.getLogger(__name__)
@@ -127,7 +127,7 @@ class StockQuant(models.Model):
             quant_cost_qty[quant.cost] += quant.qty
 
         AccountMove = self.env['account.move']
-        for cost, qty in quant_cost_qty.iteritems():
+        for cost, qty in pycompat.items(quant_cost_qty):
             move_lines = move._prepare_account_move_line(qty, cost, credit_account_id, debit_account_id)
             if move_lines:
                 date = self._context.get('force_period_date', fields.Date.context_today(self))
@@ -137,6 +137,9 @@ class StockQuant(models.Model):
                     'date': date,
                     'ref': move.picking_id.name})
                 new_account_move.post()
+                new_account_move.message_post_with_view('mail.message_origin_link',
+                        values={'self': new_account_move, 'origin': move.picking_id},
+                        subtype_id=self.env.ref('mail.mt_note').id)
 
     def _quant_create_from_move(self, qty, move, lot_id=False, owner_id=False, src_package_id=False, dest_package_id=False, force_location_from=False, force_location_to=False):
         quant = super(StockQuant, self)._quant_create_from_move(qty, move, lot_id=lot_id, owner_id=owner_id, src_package_id=src_package_id, dest_package_id=dest_package_id, force_location_from=force_location_from, force_location_to=force_location_to)
@@ -173,6 +176,15 @@ class StockQuant(models.Model):
 class StockMove(models.Model):
     _inherit = "stock.move"
 
+    to_refund = fields.Boolean(string="To Refund (update SO/PO)",
+                               help='Trigger a decrease of the delivered/received quantity in the associated Sale Order/Purchase Order')
+
+    def _set_default_price_moves(self):
+        # When the cost method is in real or average price, the price can be set to 0.0 on the PO
+        # So the price doesn't have to be updated
+        moves = super(StockMove, self)._set_default_price_moves()
+        return moves.filtered(lambda m: m.product_id.cost_method not in ('real', 'average'))
+
     @api.multi
     def action_done(self):
         self.product_price_update_before_done()
@@ -184,7 +196,8 @@ class StockMove(models.Model):
     def product_price_update_before_done(self):
         tmpl_dict = defaultdict(lambda: 0.0)
         # adapt standard price on incomming moves if the product cost_method is 'average'
-        for move in self.filtered(lambda move: move.location_id.usage == 'supplier' and move.product_id.cost_method == 'average'):
+        std_price_update = {}
+        for move in self.filtered(lambda move: move.location_id.usage in ('supplier', 'production') and move.product_id.cost_method == 'average'):
             product_tot_qty_available = move.product_id.qty_available + tmpl_dict[move.product_id.id]
 
             # if the incoming move is for a purchase order with foreign currency, need to call this to get the same value that the quant will use.
@@ -192,23 +205,24 @@ class StockMove(models.Model):
                 new_std_price = move.get_price_unit()
             else:
                 # Get the standard price
-                amount_unit = move.product_id.standard_price
+                amount_unit = std_price_update.get((move.company_id.id, move.product_id.id)) or move.product_id.standard_price
                 new_std_price = ((amount_unit * product_tot_qty_available) + (move.get_price_unit() * move.product_qty)) / (product_tot_qty_available + move.product_qty)
 
             tmpl_dict[move.product_id.id] += move.product_qty
             # Write the standard price, as SUPERUSER_ID because a warehouse manager may not have the right to write on products
-            move.product_id.with_context(force_company=move.company_id.id).write({'standard_price': new_std_price})
+            move.product_id.with_context(force_company=move.company_id.id).sudo().write({'standard_price': new_std_price})
+            std_price_update[move.company_id.id, move.product_id.id] = new_std_price
 
     @api.multi
     def product_price_update_after_done(self):
-        ''' Adapt standard price on outgoing moves if the product cost_method is 'real', so that a
+        ''' Adapt standard price on outgoing moves, so that a
         return or an inventory loss is made using the last value used for an outgoing valuation. '''
-        to_update_moves = self.filtered(lambda move: move.product_id.cost_method == 'real' and move.location_dest_id.usage != 'internal')
+        to_update_moves = self.filtered(lambda move: move.location_dest_id.usage != 'internal')
         to_update_moves._store_average_cost_price()
 
     def _store_average_cost_price(self):
-        """ Store the average price of the move on the move and product form """
-        for move in self:
+        """ Store the average price of the move on the move and product form (costing method 'real')"""
+        for move in self.filtered(lambda move: move.product_id.cost_method == 'real'):
             # product_obj = self.pool.get('product.product')
             if any(q.qty <= 0 for q in move.quant_ids) or move.product_qty == 0:
                 # if there is a negative quant, the standard price shouldn't be updated
@@ -222,6 +236,12 @@ class StockMove(models.Model):
 
             move.product_id.with_context(force_company=move.company_id.id).sudo().write({'standard_price': average_valuation_price})
             move.write({'price_unit': average_valuation_price})
+
+        for move in self.filtered(lambda move: move.product_id.cost_method != 'real' and not move.origin_returned_move_id):
+            # Unit price of the move should be the current standard price, taking into account
+            # price fluctuations due to products received between move creation (e.g. at SO
+            # confirmation) and move set to done (delivery completed).
+            move.write({'price_unit': move.product_id.standard_price})
 
     @api.multi
     def _get_accounting_data_for_valuation(self):
@@ -335,3 +355,24 @@ class StockMove(models.Model):
             }
             res.append((0, 0, price_diff_line))
         return res
+
+
+class StockReturnPicking(models.TransientModel):
+    _inherit = "stock.return.picking"
+
+    @api.multi
+    def _create_returns(self):
+        new_picking_id, pick_type_id = super(StockReturnPicking, self)._create_returns()
+        new_picking = self.env['stock.picking'].browse([new_picking_id])
+        for move in new_picking.move_lines:
+            return_picking_line = self.product_return_moves.filtered(lambda r: r.move_id == move.origin_returned_move_id)
+            if return_picking_line and return_picking_line.to_refund:
+                move.to_refund = True
+
+        return new_picking_id, pick_type_id
+
+
+class StockReturnPickingLine(models.TransientModel):
+    _inherit = "stock.return.picking.line"
+
+    to_refund = fields.Boolean(string="To Refund (update SO/PO)", help='Trigger a decrease of the delivered/received quantity in the associated Sale Order/Purchase Order')

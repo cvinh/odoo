@@ -17,8 +17,8 @@ class WebsiteSaleDigitalConfirmation(WebsiteSale):
     def payment_confirmation(self, **post):
         response = super(WebsiteSaleDigitalConfirmation, self).payment_confirmation(**post)
         order_lines = response.qcontext['order'].order_line
-        digital_content = map(lambda x: x.product_id.type == 'digital', order_lines)
-        response.qcontext.update(digital=any(digital_content))
+        digital_content = any(x.product_id.type == 'digital' for x in order_lines)
+        response.qcontext.update(digital=digital_content)
         return response
 
 
@@ -34,20 +34,16 @@ class WebsiteSaleDigital(website_account):
             return response
         order = response.qcontext['order']
         invoiced_lines = request.env['account.invoice.line'].sudo().search([('invoice_id', 'in', order.invoice_ids.ids), ('invoice_id.state', '=', 'paid')])
+        products = invoiced_lines.mapped('product_id') | order.order_line.filtered(lambda r: not r.price_subtotal).mapped('product_id')
 
         purchased_products_attachments = {}
-        for il in invoiced_lines:
-            product = il.product_id
-            # Ignore products that do not have digital content
-            if not product.product_tmpl_id.type == 'digital':
-                continue
-
+        for product in products:
             # Search for product attachments
             Attachment = request.env['ir.attachment']
             product_id = product.id
             template = product.product_tmpl_id
             att = Attachment.search_read(
-                domain=['|', '&', ('res_model', '=', product._name), ('res_id', '=', product_id), '&', ('res_model', '=', template._name), ('res_id', '=', template.id)],
+                domain=['|', '&', ('res_model', '=', product._name), ('res_id', '=', product_id), '&', ('res_model', '=', template._name), '&', ('res_id', '=', template.id), ('product_downloadable', '=', True)],
                 fields=['name', 'write_date'],
                 order='write_date desc',
             )
@@ -89,8 +85,7 @@ class WebsiteSaleDigital(website_account):
 
         # Also check for attachments in the product templates
         elif res_model == 'product.template':
-            P = request.env['product.product']
-            template_ids = map(lambda x: P.browse(x).product_tmpl_id.id, purchased_products)
+            template_ids = request.env['product.product'].browse(purchased_products).mapped('product_tmpl_id').ids
             if res_id not in template_ids:
                 return redirect(self.orders_page)
 

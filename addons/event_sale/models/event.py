@@ -2,31 +2,59 @@
 # Part of Odoo. See LICENSE file for full copyright and licensing details.
 
 from odoo import api, fields, models, _
-from odoo.exceptions import ValidationError
+from odoo.exceptions import ValidationError, UserError
 
 import odoo.addons.decimal_precision as dp
 
 
-class Event(models.Model):
+class EventType(models.Model):
+    _inherit = 'event.type'
 
-    _inherit = 'event.event'
-
-    def _default_tickets(self):
+    @api.model
+    def _get_default_event_ticket_ids(self):
         product = self.env.ref('event_sale.product_product_event', raise_if_not_found=False)
         if not product:
-            return self.env['event.event.ticket']
-        return [{
+            return False
+        return [(0, 0, {
             'name': _('Registration'),
             'product_id': product.id,
             'price': 0,
-        }]
+        })]
 
-    event_ticket_ids = fields.One2many('event.event.ticket', 'event_id', string='Event Ticket',
-        default=lambda self: self._default_tickets(), copy=True)
+    use_ticketing = fields.Boolean('Ticketing')
+    event_ticket_ids = fields.One2many(
+        'event.event.ticket', 'event_type_id',
+        string='Tickets', default=_get_default_event_ticket_ids)
+
+    @api.onchange('name')
+    def _onchange_name(self):
+        if self.name:
+            self.event_ticket_ids.filtered(lambda ticket: ticket.name == _('Registration')).update({
+                'name': _('Registration for %s') % self.name
+            })
+
+
+class Event(models.Model):
+    _inherit = 'event.event'
+
+    event_ticket_ids = fields.One2many(
+        'event.event.ticket', 'event_id', string='Event Ticket',
+        copy=True)
+
+    @api.onchange('event_type_id')
+    def _onchange_type(self):
+        super(Event, self)._onchange_type()
+        if self.event_type_id.use_ticketing:
+            self.event_ticket_ids = [(5, 0, 0)] + [
+                (0, 0, {
+                    'name': self.name and _('Registration for %s') % self.name or ticket.name,
+                    'product_id': ticket.product_id.id,
+                    'price': ticket.price,
+                })
+                for ticket in self.event_type_id.event_ticket_ids]
 
 
 class EventTicket(models.Model):
-
     _name = 'event.event.ticket'
     _description = 'Event Ticket'
 
@@ -34,15 +62,18 @@ class EventTicket(models.Model):
         return self.env.ref('event_sale.product_product_event', raise_if_not_found=False)
 
     name = fields.Char(string='Name', required=True, translate=True)
-    event_id = fields.Many2one('event.event', string="Event", required=True, ondelete='cascade')
+    event_type_id = fields.Many2one('event.type', string='Event Category', ondelete='cascade')
+    event_id = fields.Many2one('event.event', string="Event", ondelete='cascade')
     product_id = fields.Many2one('product.product', string='Product',
-        required=True, domain=[("event_ok", "=", True)], default=_default_product_id)
+        required=True, domain=[("event_ok", "=", True)],
+        default=_default_product_id)
     registration_ids = fields.One2many('event.registration', 'event_ticket_id', string='Registrations')
     price = fields.Float(string='Price', digits=dp.get_precision('Product Price'))
     deadline = fields.Date(string="Sales End")
     is_expired = fields.Boolean(string='Is Expired', compute='_compute_is_expired')
 
     price_reduce = fields.Float(string="Price Reduce", compute="_compute_price_reduce", digits=dp.get_precision('Product Price'))
+    price_reduce_taxinc = fields.Float(compute='_get_price_reduce_tax', string='Price Reduce Tax inc')
     # seats fields
     seats_availability = fields.Selection([('limited', 'Limited'), ('unlimited', 'Unlimited')],
         string='Available Seat', required=True, store=True, compute='_compute_seats', default="limited")
@@ -69,6 +100,13 @@ class EventTicket(models.Model):
             product = record.product_id
             discount = product.lst_price and (product.lst_price - product.price) / product.lst_price or 0.0
             record.price_reduce = (1.0 - discount) * record.price
+
+    def _get_price_reduce_tax(self):
+        for record in self:
+            # sudo necessary here since the field is most probably accessed through the website
+            tax_ids = record.sudo().product_id.taxes_id.filtered(lambda r: r.company_id == record.event_id.company_id)
+            taxes = tax_ids.compute_all(record.price_reduce, record.event_id.company_id.currency_id, 1.0, product=record.product_id)
+            record.price_reduce_taxinc = taxes['total_included']
 
     @api.multi
     @api.depends('seats_max', 'registration_ids.state')
@@ -106,6 +144,11 @@ class EventTicket(models.Model):
             if record.seats_max and record.seats_available < 0:
                 raise ValidationError(_('No more available seats for the ticket'))
 
+    @api.constrains('event_type_id', 'event_id')
+    def _constrains_event(self):
+        if any(ticket.event_type_id and ticket.event_id for ticket in self):
+            raise UserError(_('Ticket should belong to either event category or event but not both'))
+
     @api.onchange('product_id')
     def _onchange_product_id(self):
         self.price = self.product_id.list_price or 0
@@ -116,10 +159,10 @@ class EventRegistration(models.Model):
 
     event_ticket_id = fields.Many2one('event.event.ticket', string='Event Ticket')
     # in addition to origin generic fields, add real relational fields to correctly
-    # handle attendees linked to sale orders and their lines
+    # handle attendees linked to sales orders and their lines
     # TDE FIXME: maybe add an onchange on sale_order_id + origin
-    sale_order_id = fields.Many2one('sale.order', string='Source Sale Order', ondelete='cascade')
-    sale_order_line_id = fields.Many2one('sale.order.line', string='Sale Order Line', ondelete='cascade')
+    sale_order_id = fields.Many2one('sale.order', string='Source Sales Order', ondelete='cascade')
+    sale_order_line_id = fields.Many2one('sale.order.line', string='Sales Order Line', ondelete='cascade')
 
     @api.multi
     @api.constrains('event_ticket_id', 'state')

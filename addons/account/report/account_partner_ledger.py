@@ -11,6 +11,7 @@ class ReportPartnerLedger(models.AbstractModel):
 
     def _lines(self, data, partner):
         full_account = []
+        currency = self.env['res.currency']
         query_get_data = self.env['account.move.line'].with_context(data['form'].get('used_context', {}))._query_get()
         reconcile_clause = "" if data['form']['reconciled'] else ' AND "account_move_line".reconciled = false '
         params = [partner.id, tuple(data['computed']['move_state']), tuple(data['computed']['account_ids'])] + query_get_data[2]
@@ -40,6 +41,7 @@ class ReportPartnerLedger(models.AbstractModel):
             )
             sum += r['debit'] - r['credit']
             r['progress'] = sum
+            r['currency_id'] = currency.browse(r.get('currency_id'))
             full_account.append(r)
         return full_account
 
@@ -66,7 +68,7 @@ class ReportPartnerLedger(models.AbstractModel):
         return result
 
     @api.model
-    def render_html(self, docids, data=None):
+    def get_report_values(self, docids, data=None):
         data['computed'] = {}
 
         obj_partner = self.env['res.partner']
@@ -105,7 +107,7 @@ class ReportPartnerLedger(models.AbstractModel):
         partners = obj_partner.browse(partner_ids)
         partners = sorted(partners, key=lambda x: (x.ref, x.name))
 
-        docargs = {
+        return {
             'doc_ids': partner_ids,
             'doc_model': self.env['res.partner'],
             'data': data,
@@ -114,4 +116,3 @@ class ReportPartnerLedger(models.AbstractModel):
             'lines': self._lines,
             'sum_partner': self._sum_partner,
         }
-        return self.env['report'].render('account.report_partnerledger', docargs)

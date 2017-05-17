@@ -22,7 +22,9 @@ class SaleQuoteTemplate(models.Model):
         (1, 'Immediate after website order validation'),
         (2, 'Immediate after website order validation and save a token'),
     ], 'Payment', help="Require immediate payment by the customer when validating the order from the website quote")
-    mail_template_id = fields.Many2one('mail.template', 'Confirmation Mail',
+    mail_template_id = fields.Many2one(
+        'mail.template', 'Confirmation Mail',
+        domain=[('model', '=', 'sale.order')],
         help="This e-mail template will be sent on confirmation. Leave empty to send nothing.")
 
     @api.multi
@@ -58,7 +60,7 @@ class SaleQuoteLine(models.Model):
     def _onchange_product_id(self):
         self.ensure_one()
         if self.product_id:
-            name = self.product_id.name
+            name = self.product_id.name_get()[0][1]
             if self.product_id.description_sale:
                 name += '\n' + self.product_id.description_sale
             self.name = name

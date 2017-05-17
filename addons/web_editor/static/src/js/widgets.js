@@ -107,8 +107,7 @@ var MediaDialog = Dialog.extend({
     },
     start: function () {
         var self = this;
-
-        this.only_images = this.options.only_images || this.options.select_images || (this.media && $(this.media).parent().data("oe-field") === "image");
+        this.only_images = this.options.only_images || this.options.select_images || (this.media && ($(this.media).parent().data("oe-field") === "image" || $(this.media).parent().data("oe-type") === "image"));
         if (this.only_images) {
             this.$('[href="#editor-media-document"], [href="#editor-media-video"], [href="#editor-media-icon"]').addClass('hidden');
         }
@@ -295,7 +294,9 @@ var ImageDialog = Widget.extend({
             self.display_attachments();
         });
         this.fetch_existing().then(function () {
-            self.set_image(_.find(self.records, function (record) { return record.url === o.url;}) || o);
+            if (o.url) {
+                self.set_image(_.find(self.records, function (record) { return record.url === o.url;}) || o);
+            }
         });
         return res;
     },
@@ -562,6 +563,7 @@ var getCssSelectors = function (filter) {
                             if (!data) {
                                 data = [match[1], rules[r].cssText.replace(/(^.*\{\s*)|(\s*\}\s*$)/g, ''), clean, [clean]];
                             } else {
+                                data[0] += (", " + match[1]);
                                 data[3].push(clean);
                             }
                         }
@@ -634,8 +636,11 @@ var fontIconsDialog = Widget.extend({
     },
     renderElement: function () { // extract list of font (like awesome) from the cheatsheet.
         this.iconsParser = fontIcons;
-        this.icons = _.flatten(_.map(fontIcons, function (data) {
+        this.icons = _.flatten(_.map(fontIcons, function (data) { // TODO maybe useless now
             return data.icons;
+        }));
+        this.alias = _.flatten(_.map(fontIcons, function (data) {
+            return data.alias;
         }));
         this._super.apply(this, arguments);
     },
@@ -738,11 +743,8 @@ var fontIconsDialog = Widget.extend({
                 case '': continue;
                 default:
                     $(".font-icons-icon").removeClass("o_selected").filter("[data-alias*=',"+cls+",']").addClass("o_selected");
-                    for (var k=0; k<this.icons.length; k++) {
-                        if (this.icons.indexOf(cls) !== -1) {
-                            this.$('#fa-icon').val(cls);
-                            break;
-                        }
+                    if (this.alias.indexOf(cls) !== -1) {
+                        this.$('#fa-icon').val(cls);
                     }
             }
         }
@@ -812,7 +814,7 @@ function createVideoNode(url, options) {
             class: 'vine-embed'
         });
     } else if (vimMatch && vimMatch[3].length) {
-        $video = $('<iframe webkitallowfullscreen mozallowfullscreen allowfullscreen>', {
+        $video = $('<iframe>', {
             src: '//player.vimeo.com/video/' + vimMatch[3],
             width: '640',
             height: '360'
@@ -824,14 +826,14 @@ function createVideoNode(url, options) {
             height: '360'
         });
     } else if (youkuMatch && youkuMatch[1].length) {
-        $video = $('<iframe webkitallowfullscreen mozallowfullscreen allowfullscreen>', {
+        $video = $('<iframe>', {
             height: '498',
             width: '510',
             src: '//player.youku.com/embed/' + youkuMatch[1]
         });
     } else {
         // this is not a known video link. Now what, Cat? Now what?
-        $video = $('<iframe webkitallowfullscreen mozallowfullscreen allowfullscreen>', {
+        $video = $('<iframe>', {
             width: '640',
             height: '360',
             src: url
@@ -944,7 +946,7 @@ var LinkDialog = Dialog.extend({
         'keyup :input.url': 'onkeyup',
         'keyup :input': 'preview',
         'click button.remove': 'remove_link',
-        'change input#link-text': function (e) {
+        'change input#o_link_dialog_label_input': function (e) {
             this.text = $(e.target).val();
         },
         'change .link-style': function (e) {
@@ -1040,6 +1042,7 @@ var LinkDialog = Dialog.extend({
     start: function () {
         this.bind_data();
         this.$('input.url-source:eq(1)').closest('.list-group-item').addClass('active');
+        this.$('#o_link_dialog_label_input').focus();
         return this._super.apply(this, arguments);
     },
     get_data: function (test) {
@@ -1050,7 +1053,7 @@ var LinkDialog = Dialog.extend({
             $e = this.$('input.url-source:first');
         }
         var val = $e.val();
-        var label = this.$('#link-text').val() || val;
+        var label = this.$('#o_link_dialog_label_input').val() || val;
 
         if (label && this.data.images) {
             for(var i=0; i<this.data.images.length; i++) {
@@ -1066,7 +1069,7 @@ var LinkDialog = Dialog.extend({
         }
 
         var style = this.$("input[name='link-style-type']:checked").val() || '';
-        var size = this.$("input[name='link-style-size']:checked").val() || '';
+        var size = this.$("select.link-style").val() || '';
         var classes = (this.data.className || "") + (style && style.length ? " btn " : "") + style + " " + size;
         var isNewWindow = this.$('input.window-new').prop('checked');
 
@@ -1104,14 +1107,19 @@ var LinkDialog = Dialog.extend({
         var text = this.data.text;
         var classes = this.data.iniClassName;
 
-        this.$('input#link-text').val(text);
+        this.$('input#o_link_dialog_label_input').val(text);
         this.$('input.window-new').prop('checked', new_window);
+        this.$('input.link-style').prop('checked', false).first().prop("checked", true);
 
         if (classes) {
-            this.$('input[value!=""]').each(function () {
+            this.$('input.link-style, select.link-style > option').each(function () {
                 var $option = $(this);
-                if (classes.indexOf($option.val()) !== -1) {
-                    $option.attr("checked", "checked");
+                if ($option.val() && classes.indexOf($option.val()) >= 0) {
+                    if ($option.is("input")) {
+                        $option.prop("checked", true);
+                    } else {
+                        $option.parent().val($option.val());
+                    }
                 }
             });
         }

@@ -10,7 +10,7 @@ class HrTimesheetSheet(models.Model):
     _inherit = "hr_timesheet_sheet.sheet"
 
     attendances_ids = fields.One2many('hr.attendance', 'sheet_id', 'Attendances')
-    total_attendance = fields.Integer(string='Total Attendance', compute='_compute_total')
+    total_attendance = fields.Float(string='Total Attendance', compute='_compute_total')
     total_timesheet = fields.Float(string='Total Timesheet', compute="_compute_total")
     total_difference = fields.Float(string='Difference', compute="_compute_total")
     period_ids = fields.One2many('hr_timesheet_sheet.sheet.day', 'sheet_id', string='Period', readonly=True)
@@ -82,7 +82,7 @@ class HrTimesheetSheet(models.Model):
         """
         self.ensure_one()
         if any(self.attendances_ids.filtered(lambda r: not r.check_out)):
-            raise UserError(_("The timesheet cannot be validated as it contains an attendance record with no Check Out)."))
+            raise UserError(_("The timesheet cannot be validated as it contains an attendance record with no Check Out."))
         return True
 
 

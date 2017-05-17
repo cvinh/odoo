@@ -11,7 +11,7 @@ from collections import defaultdict
 
 from odoo import api, fields, models, tools, SUPERUSER_ID, _
 from odoo.exceptions import AccessError
-from odoo.tools import config, human_size, ustr, html_escape
+from odoo.tools import config, human_size, ustr, html_escape, pycompat
 from odoo.tools.mimetypes import guess_mimetype
 
 _logger = logging.getLogger(__name__)
@@ -26,7 +26,7 @@ class IrAttachment(models.Model):
     The computed field ``datas`` is implemented using ``_file_read``,
     ``_file_write`` and ``_file_delete``, which can be overridden to implement
     other storage engines. Such methods should check for other location pseudo
-    uri (example: hdfs://hadoppserver).
+    uri (example: hdfs://hadoopserver).
 
     The default implementation is the file:dirname location that stores files
     on the local filesystem using name based on their sha1 hash
@@ -138,8 +138,17 @@ class IrAttachment(models.Model):
         if self._storage() != 'file':
             return
 
-        # prevent all concurrent updates on ir_attachment while collecting!
+        # Continue in a new transaction. The LOCK statement below must be the
+        # first one in the current transaction, otherwise the database snapshot
+        # used by it may not contain the most recent changes made to the table
+        # ir_attachment! Indeed, if concurrent transactions create attachments,
+        # the LOCK statement will wait until those concurrent transactions end.
+        # But this transaction will not see the new attachements if it has done
+        # other requests before the LOCK (like the method _storage() above).
         cr = self._cr
+        cr.commit()
+
+        # prevent all concurrent updates on ir_attachment while collecting!
         cr.execute("LOCK ir_attachment IN SHARE MODE")
 
         # retrieve the file names from the checklist
@@ -158,7 +167,7 @@ class IrAttachment(models.Model):
 
         # remove garbage files, and clean up checklist
         removed = 0
-        for fname, filepath in checklist.iteritems():
+        for fname, filepath in pycompat.items(checklist):
             if fname not in whitelist:
                 try:
                     os.unlink(self._full_path(fname))
@@ -168,6 +177,8 @@ class IrAttachment(models.Model):
             with tools.ignore(OSError):
                 os.unlink(filepath)
 
+        # commit to release the lock
+        cr.commit()
         _logger.info("filestore gc %d checked, %d removed", len(checklist), removed)
 
     @api.depends('store_fname', 'db_datas')
@@ -280,10 +291,8 @@ class IrAttachment(models.Model):
     @api.model_cr_context
     def _auto_init(self):
         res = super(IrAttachment, self)._auto_init()
-        self._cr.execute('SELECT indexname FROM pg_indexes WHERE indexname = %s', ('ir_attachment_res_idx',))
-        if not self._cr.fetchone():
-            self._cr.execute('CREATE INDEX ir_attachment_res_idx ON ir_attachment (res_model, res_id)')
-            self._cr.commit()
+        tools.create_index(self._cr, 'ir_attachment_res_idx',
+                           self._table, ['res_model', 'res_id'])
         return res
 
     @api.model
@@ -309,7 +318,7 @@ class IrAttachment(models.Model):
             model_ids[values['res_model']].add(values['res_id'])
 
         # check access rights on the records
-        for res_model, res_ids in model_ids.iteritems():
+        for res_model, res_ids in pycompat.items(model_ids):
             # ignore attachments that are not attached to a resource anymore
             # when checking access rights (resource was deleted but attachment
             # was not)
@@ -365,16 +374,16 @@ class IrAttachment(models.Model):
 
         # To avoid multiple queries for each attachment found, checks are
         # performed in batch as much as possible.
-        for res_model, targets in model_attachments.iteritems():
+        for res_model, targets in pycompat.items(model_attachments):
             if res_model not in self.env:
                 continue
             if not self.env[res_model].check_access_rights('read', False):
                 # remove all corresponding attachment ids
-                ids.difference_update(itertools.chain(*targets.itervalues()))
+                ids.difference_update(itertools.chain(*pycompat.values(targets)))
                 continue
             # filter ids according to what access rules permit
             target_ids = list(targets)
-            allowed = self.env[res_model].search([('id', 'in', target_ids)])
+            allowed = self.env[res_model].with_context(active_test=False).search([('id', 'in', target_ids)])
             for res_id in set(target_ids).difference(allowed.ids):
                 ids.difference_update(targets[res_id])
 
