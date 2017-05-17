@@ -257,6 +257,7 @@ class AccountVoucher(models.Model):
                 'date': self.account_date,
                 'tax_ids': [(4,t.id) for t in line.tax_ids],
                 'amount_currency': line.price_subtotal if current_currency != company_currency else 0.0,
+                'currency_id': company_currency != current_currency and current_currency or False,
             }
 
             self.env['account.move.line'].with_context(apply_taxes=True).create(move_line)
@@ -282,7 +283,7 @@ class AccountVoucher(models.Model):
             move = self.env['account.move'].create(voucher.account_move_get())
             # Get the name of the account_move just created
             # Create the first line of the voucher
-            move_line = self.env['account.move.line'].with_context(ctx).create(voucher.first_move_line_get(move.id, company_currency, current_currency))
+            move_line = self.env['account.move.line'].with_context(ctx).create(voucher.with_context(ctx).first_move_line_get(move.id, company_currency, current_currency))
             line_total = move_line.debit - move_line.credit
             if voucher.voucher_type == 'sale':
                 line_total = line_total - voucher._convert_amount(voucher.tax_amount)
@@ -356,7 +357,7 @@ class AccountVoucherLine(models.Model):
             self.company_id.id,
             self.voucher_id.currency_id.id,
             self.voucher_id.voucher_type)
-        for fname, fvalue in onchange_res['values'].iteritems():
+        for fname, fvalue in onchange_res['value'].iteritems():
             setattr(self, fname, fvalue)
 
     def _get_account(self, product, fpos, type):

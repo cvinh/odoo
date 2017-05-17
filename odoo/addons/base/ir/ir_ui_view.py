@@ -271,7 +271,7 @@ actual arch.
                         self.raise_view_error(message, self.id)
         return True
 
-    @api.constrains('arch', 'arch_base')
+    @api.constrains('arch_db')
     def _check_xml(self):
         # Sanity checks: the view should not break anything upon rendering!
         # Any exception raised below will cause a transaction rollback.
@@ -305,6 +305,13 @@ actual arch.
         for view in self:
             if view.type == 'qweb' and view.groups_id:
                 raise ValidationError(_("Qweb view cannot have 'Groups' define on the record. Use 'groups' attributes inside the view definition"))
+
+    @api.constrains('inherit_id')
+    def _check_000_inheritance(self):
+        # NOTE: constraints methods are check alphabetically. Always ensure this method will be
+        #       called before other constraint metheods to avoid infinite loop in `read_combined`.
+        if not self._check_recursion(parent='inherit_id'):
+            raise ValidationError(_('You cannot create recursive inherited views.'))
 
     _sql_constraints = [
         ('inheritance_mode',
@@ -1138,7 +1145,7 @@ actual arch.
         query = """SELECT max(v.id)
                      FROM ir_ui_view v
                 LEFT JOIN ir_model_data md ON (md.model = 'ir.ui.view' AND md.res_id = v.id)
-                    WHERE md.module IS NULL
+                    WHERE md.module NOT IN (SELECT name FROM ir_module_module)
                       AND v.model = %s
                       AND v.active = true
                  GROUP BY coalesce(v.inherit_id, v.id)"""
