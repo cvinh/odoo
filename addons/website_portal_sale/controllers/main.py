@@ -125,9 +125,12 @@ class website_account(website_account):
             order.check_access_rule('read')
         except AccessError:
             return request.render("website.403")
-        order_invoice_lines = {il.product_id.id: il.invoice_id for il in order.invoice_ids.mapped('invoice_line_ids')}
+
+        order_sudo = order.sudo()
+        order_invoice_lines = {il.product_id.id: il.invoice_id for il in order_sudo.invoice_ids.mapped('invoice_line_ids')}
+
         return request.render("website_portal_sale.orders_followup", {
-            'order': order.sudo(),
+            'order': order_sudo,
             'order_invoice_lines': order_invoice_lines,
         })
 
@@ -144,7 +147,7 @@ class website_account(website_account):
         domain = [
             ('type', 'in', ['out_invoice', 'out_refund']),
             ('message_partner_ids', 'child_of', [partner.commercial_partner_id.id]),
-            ('state', 'in', ['open', 'paid', 'cancelled'])
+            ('state', 'in', ['open', 'paid', 'cancel'])
         ]
         archive_groups = self._get_archive_groups('account.invoice', domain)
         if date_begin and date_end:
