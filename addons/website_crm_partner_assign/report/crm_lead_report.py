@@ -32,7 +32,6 @@ class CrmLeadReportAssign(models.Model):
     opening_date = fields.Datetime('Opening Date', readonly=True)
     date_closed = fields.Datetime('Close Date', readonly=True)
     nbr_cases = fields.Integer('# of Cases', readonly=True, oldname='nbr')
-    company_id = fields.Many2one('res.company', 'Company', readonly=True)
     priority = fields.Selection(crm_stage.AVAILABLE_PRIORITIES, 'Priority')
     type = fields.Selection([
         ('lead', 'Lead'),
@@ -67,7 +66,7 @@ class CrmLeadReportAssign(models.Model):
                     p.grade_id,
                     p.date as partner_date,
                     c.planned_revenue*(c.probability/100) as probable_revenue,
-                    1 as nbr,
+                    1 as nbr_cases,
                     c.create_date as create_date,
                     extract('epoch' from (c.write_date-c.create_date))/(3600*24) as  delay_close,
                     extract('epoch' from (c.date_deadline - c.date_closed))/(3600*24) as  delay_expected,

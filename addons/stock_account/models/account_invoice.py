@@ -38,7 +38,7 @@ class AccountInvoice(models.Model):
             cacc = accounts['expense'].id
             if dacc and cacc:
                 price_unit = i_line._get_anglo_saxon_price_unit()
-                if inv.currency_id.id != company_currency:
+                if inv.currency_id != company_currency:
                     currency_id = inv.currency_id.id
                     amount_currency = i_line._get_price(company_currency, price_unit)
                 else:
@@ -94,7 +94,7 @@ class AccountInvoiceLine(models.Model):
             price = company_currency.with_context(date=self.invoice_id.date_invoice).compute(price_unit * self.quantity, self.invoice_id.currency_id)
         else:
             price = price_unit * self.quantity
-        return round(price, self.invoice_id.currency_id.decimal_places)
+        return self.invoice_id.currency_id.round(price)
 
     def get_invoice_line_account(self, type, product, fpos, company):
         if company.anglo_saxon_accounting and type in ('in_invoice', 'in_refund') and product and product.type == 'product':

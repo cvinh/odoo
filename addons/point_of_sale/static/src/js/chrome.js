@@ -8,6 +8,7 @@ var models = require('point_of_sale.models');
 var core = require('web.core');
 var ajax = require('web.ajax');
 var CrashManager = require('web.CrashManager');
+var BarcodeEvents = require('barcodes.BarcodeEvents').BarcodeEvents;
 
 
 var _t = core._t;
@@ -103,12 +104,11 @@ var UsernameWidget = PosBaseWidget.extend({
             'title':      _t('Change Cashier'),
         }).then(function(user){
             self.pos.set_cashier(user);
-            self.pos.gui.screen_instances.products.numpad.check_price_control_rights();
             self.renderElement();
         });
     },
     get_name: function(){
-        var user = this.pos.cashier || this.pos.user;
+        var user = this.pos.get_cashier();
         if(user){
             return user.name;
         }else{
@@ -271,7 +271,7 @@ var DebugWidget = PosBaseWidget.extend({
         this.$('.button.delete_unpaid_orders').click(function(){
             self.gui.show_popup('confirm',{
                 'title': _t('Delete Unpaid Orders ?'),
-                'body':  _t('This operation will permanently destroy all unpaid orders from all sessions that have been put in the local storage. You will lose all the data and exit the point of sale. This operation cannot be undone.'),
+                'body':  _t('This operation will destroy all unpaid orders in the browser. You will lose all the unsaved data and exit the point of sale. This operation cannot be undone.'),
                 confirm: function(){
                     self.pos.db.remove_all_unpaid_orders();
                     window.location = '/';
@@ -573,7 +573,7 @@ var Chrome = PosBaseWidget.extend({
         this.started  = new $.Deferred(); // resolves when DOM is online
         this.ready    = new $.Deferred(); // resolves when the whole GUI has been loaded
 
-        this.pos = new models.PosModel(this.session,{chrome:this});
+        this.pos = new models.PosModel(this.getSession(), {chrome:this});
         this.gui = new gui.Gui({pos: this.pos, chrome: this});
         this.chrome = this; // So that chrome's childs have chrome set automatically
         this.pos.gui = this.gui;
@@ -607,10 +607,8 @@ var Chrome = PosBaseWidget.extend({
         $(window).off();
         $('html').off();
         $('body').off();
-        $(this.$el).parent().off();
-        $('document').off();
-        $('.oe_web_client').off();
-        $('.openerp_webclient_container').off();
+        // The above lines removed the bindings, but we really need them for the barcode
+        BarcodeEvents.start();
     },
 
     build_chrome: function() { 

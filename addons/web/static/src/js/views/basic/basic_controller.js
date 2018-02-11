@@ -8,7 +8,6 @@ odoo.define('web.BasicController', function (require) {
  */
 
 var AbstractController = require('web.AbstractController');
-var concurrency = require('web.concurrency');
 var core = require('web.core');
 var Dialog = require('web.Dialog');
 var FieldManagerMixin = require('web.FieldManagerMixin');
@@ -18,7 +17,9 @@ var _t = core._t;
 
 var BasicController = AbstractController.extend(FieldManagerMixin, {
     custom_events: _.extend({}, AbstractController.prototype.custom_events, FieldManagerMixin.custom_events, {
+        discard_changes: '_onDiscardChanges',
         reload: '_onReload',
+        set_dirty: '_onSetDirty',
         sidebar_data_asked: '_onSidebarDataAsked',
         translate: '_onTranslate',
     }),
@@ -37,13 +38,15 @@ var BasicController = AbstractController.extend(FieldManagerMixin, {
         FieldManagerMixin.init.call(this, this.model);
         this.handle = params.initialState.id;
         this.mode = params.mode || 'readonly';
-        this.mutex = new concurrency.Mutex();
     },
     /**
      * @override
      * @returns {Deferred}
      */
     start: function () {
+        // add classname to reflect the (absence of) access rights (used to
+        // correctly display the nocontent helper)
+        this.$el.toggleClass('o_cannot_create', !this.activeActions.create);
         return this._super.apply(this, arguments)
                           .then(this._updateEnv.bind(this));
     },
@@ -65,11 +68,11 @@ var BasicController = AbstractController.extend(FieldManagerMixin, {
      *          rejected otherwise
      */
     canBeDiscarded: function (recordID) {
-        if (!this.model.isDirty(recordID || this.handle)) {
+        if (!this.isDirty(recordID)) {
             return $.when(false);
         }
 
-        var message = _t("The record has been modified, your changes will be discarded. Are you sure you want to ?");
+        var message = _t("The record has been modified, your changes will be discarded. Do you want to proceed?");
         var def = $.Deferred();
         var dialog = Dialog.confirm(this, message, {
             title: _t("Warning"),
@@ -99,47 +102,32 @@ var BasicController = AbstractController.extend(FieldManagerMixin, {
         return true;
     },
     /**
-     * Discards the changes made to the record whose ID is given, if necessary.
-     * Automatically leaves to default mode for the given record.
+     * Waits for the mutex to be unlocked and then calls _.discardChanges.
+     * This ensures that the confirm dialog isn't displayed directly if there is
+     * a pending 'write' rpc.
      *
-     * @param {string} [recordID] - default to main recordID
-     * @param {Object} [options]
-     * @param {boolean} [options.readonlyIfRealDiscard=false]
-     *        After discarding record changes, the usual option is to make the
-     *        record readonly. However, the view manager calls this function
-     *        at inappropriate times in the current code and in that case, we
-     *        don't want to go back to readonly if there is nothing to discard
-     *        (e.g. when switching record in edit mode in form view, we expect
-     *        the new record to be in edit mode too, but the view manager calls
-     *        this function as the URL changes...) @todo get rid of this when
-     *        the view manager is improved.
-     * @returns {Deferred}
+     * @see _.discardChanges
      */
     discardChanges: function (recordID, options) {
-        var self = this;
-        recordID = recordID || this.handle;
-        return this.canBeDiscarded(recordID).then(function (needDiscard) {
-            if (options && options.readonlyIfRealDiscard && !needDiscard) {
-                return;
-            }
-
-            if (needDiscard) { // Just some optimization
-                self.model.discardChanges(recordID);
-            }
-            if (self.model.isNew(recordID)) {
-                self._abandonRecord(recordID);
-                return;
-            }
-            return self._confirmSave(recordID);
-        });
+        return this.mutex.exec(function () {})
+            .then(this._discardChanges.bind(this, recordID || this.handle, options));
     },
     /**
      * Method that will be overriden by the views with the ability to have selected ids
      *
-     * @returns []
+     * @returns {Array}
      */
     getSelectedIds: function () {
         return [];
+    },
+    /**
+     * Returns true iff the given recordID (or the main recordID) is dirty.
+     *
+     * @param {string} [recordID] - default to main recordID
+     * @returns {boolean}
+     */
+    isDirty: function (recordID) {
+        return this.model.isDirty(recordID || this.handle);
     },
     /**
      * @override
@@ -184,8 +172,12 @@ var BasicController = AbstractController.extend(FieldManagerMixin, {
         // user if some discarding has to be made). This operation must also be
         // mutex-protected as commitChanges function of x2m has to be aware of
         // all final changes made to a row.
-        this.mutex.exec(this.renderer.commitChanges.bind(this.renderer, recordID || this.handle)); // TODO write a test for this
-        return this.mutex.exec(this._saveRecord.bind(this, recordID, options));
+        var self = this;
+        return this.mutex
+            .exec(this.renderer.commitChanges.bind(this.renderer, recordID || this.handle))
+            .then(function () {
+                return self.mutex.exec(self._saveRecord.bind(self, recordID, options));
+            });
     },
     /**
      * @override
@@ -217,7 +209,7 @@ var BasicController = AbstractController.extend(FieldManagerMixin, {
     _abandonRecord: function (recordID) {
         recordID = recordID || this.handle;
         if (recordID === this.handle) {
-            this.trigger_up('switch_to_previous_view');
+            this.trigger_up('history_back');
         } else {
             this.model.removeLine(recordID);
         }
@@ -247,25 +239,25 @@ var BasicController = AbstractController.extend(FieldManagerMixin, {
         var self = this;
         var def = $.Deferred();
         var reload = function () {
-            if (!self.isDestroyed()) {
-                self.reload();
-            }
+            return self.isDestroyed() ? $.when() : self.reload();
         };
         record = record || this.model.get(this.handle);
-        var recordID = record.data.id;
+
         this.trigger_up('execute_action', {
             action_data: _.extend({}, attrs, {
-                context: record.getContext({additionalContext: attrs.context}),
+                context: record.getContext({additionalContext: attrs.context || {}}),
             }),
-            model: record.model,
-            record_id: recordID,
-            on_closed: function (reason) {
-                if (!_.isObject(reason)) {
-                    reload();
-                }
+            env: {
+                context: record.getContext(),
+                currentID: record.data.id,
+                model: record.model,
+                resIDs: record.res_ids,
             },
-            on_fail: reload,
             on_success: def.resolve.bind(def),
+            on_fail: function () {
+                reload().always(def.reject.bind(def));
+            },
+            on_closed: reload,
         });
         return this.alive(def);
     },
@@ -306,6 +298,60 @@ var BasicController = AbstractController.extend(FieldManagerMixin, {
         }
     },
     /**
+     * Disables buttons so that they can't be clicked anymore.
+     *
+     * @private
+     */
+    _disableButtons: function () {
+        if (this.$buttons) {
+            this.$buttons.find('button').attr('disabled', true);
+        }
+    },
+    /**
+     * Discards the changes made to the record whose ID is given, if necessary.
+     * Automatically leaves to default mode for the given record.
+     *
+     * @private
+     * @param {string} [recordID] - default to main recordID
+     * @param {Object} [options]
+     * @param {boolean} [options.readonlyIfRealDiscard=false]
+     *        After discarding record changes, the usual option is to make the
+     *        record readonly. However, the action manager calls this function
+     *        at inappropriate times in the current code and in that case, we
+     *        don't want to go back to readonly if there is nothing to discard
+     *        (e.g. when switching record in edit mode in form view, we expect
+     *        the new record to be in edit mode too, but the view manager calls
+     *        this function as the URL changes...) @todo get rid of this when
+     *        the webclient/action_manager's hashchange mechanism is improved.
+     * @returns {Deferred}
+     */
+    _discardChanges: function (recordID, options) {
+        var self = this;
+        recordID = recordID || this.handle;
+        return this.canBeDiscarded(recordID)
+            .then(function (needDiscard) {
+                if (options && options.readonlyIfRealDiscard && !needDiscard) {
+                    return;
+                }
+                self.model.discardChanges(recordID);
+                if (self.model.isNew(recordID)) {
+                    self._abandonRecord(recordID);
+                    return;
+                }
+                return self._confirmSave(recordID);
+            });
+    },
+    /**
+     * Enables buttons so they can be clicked again.
+     *
+     * @private
+     */
+    _enableButtons: function () {
+        if (this.$buttons) {
+            this.$buttons.find('button').removeAttr('disabled');
+        }
+    },
+    /**
      * Returns the new sidebar env
      *
      * @private
@@ -317,17 +363,6 @@ var BasicController = AbstractController.extend(FieldManagerMixin, {
             activeIds: this.getSelectedIds(),
             model: this.modelName,
         };
-    },
-    /**
-     * Used by list and kanban views to determine whether or not to display
-     * the no content helper (if there is no data in the state to display)
-     *
-     * @private
-     * @param {Object} state
-     * @returns {boolean}
-     */
-    _hasContent: function (state) {
-        return state.count !== 0;
     },
     /**
      * Helper function to display a warning that some fields have an invalid
@@ -385,18 +420,20 @@ var BasicController = AbstractController.extend(FieldManagerMixin, {
         // Note: it is the model's job to do nothing if there is nothing to save
         if (this.canBeSaved(recordID)) {
             var self = this;
-            var def = this.model.save(recordID, { // Save then leave edit mode
+            var saveDef = this.model.save(recordID, { // Save then leave edit mode
                 reload: options.reload,
                 savePoint: options.savePoint,
+                viewType: options.viewType,
             });
             if (!options.stayInEdit) {
-                def = def.then(function (fieldNames) {
-                    return self._confirmSave(recordID).then(function () {
+                saveDef = saveDef.then(function (fieldNames) {
+                    var def = fieldNames.length ? self._confirmSave(recordID) : self._setMode('readonly', recordID);
+                    return def.then(function () {
                         return fieldNames;
                     });
                 });
             }
-            return def;
+            return saveDef;
         } else {
             return $.Deferred().reject(); // Cannot be saved
         }
@@ -413,7 +450,11 @@ var BasicController = AbstractController.extend(FieldManagerMixin, {
      */
     _setMode: function (mode, recordID) {
         if ((recordID || this.handle) === this.handle) {
-            return this.update({mode: mode}, {reload: false});
+            return this.update({mode: mode}, {reload: false}).then(function () {
+                // necessary to allow all sub widgets to use their dimensions in
+                // layout related activities, such as autoresize on fieldtexts
+                core.bus.trigger('DOM_updated');
+            });
         }
         return $.when();
     },
@@ -429,7 +470,7 @@ var BasicController = AbstractController.extend(FieldManagerMixin, {
             var sidebarEnv = this._getSidebarEnv();
             this.sidebar.updateEnv(sidebarEnv);
         }
-        this.trigger_up('env_updated', env);
+        this.trigger_up('env_updated', {controllerID: this.controllerID, env: env});
     },
     /**
      * Helper method, to make sure the information displayed by the pager is up
@@ -457,12 +498,34 @@ var BasicController = AbstractController.extend(FieldManagerMixin, {
     //--------------------------------------------------------------------------
 
     /**
+     * Called when a list element asks to discard the changes made to one of
+     * its rows.  It can happen with a x2many (if we are in a form view) or with
+     * a list view.
+     *
+     * @private
+     * @param {OdooEvent} ev
+     */
+    _onDiscardChanges: function (ev) {
+        var self = this;
+        ev.stopPropagation();
+        var recordID = ev.data.recordID;
+        this._discardChanges(recordID)
+            .done(function () {
+                // TODO this will tell the renderer to rerender the widget that
+                // asked for the discard but will unfortunately lose the click
+                // made on another row if any
+                self._confirmChange(self.handle, [ev.data.fieldName], ev)
+                    .always(ev.data.onSuccess);
+            })
+            .fail(ev.data.onFailure);
+    },
+    /**
      * Forces to save directly the changes if the controller is in readonly,
      * because in that case the changes come from widgets that are editable even
      * in readonly (e.g. Priority).
      *
      * @private
-     * @param {OdooEvent}
+     * @param {OdooEvent} ev
      */
     _onFieldChanged: function (ev) {
         if (this.mode === 'readonly') {
@@ -484,6 +547,7 @@ var BasicController = AbstractController.extend(FieldManagerMixin, {
      *   reload
      */
     _onReload: function (event) {
+        event.stopPropagation(); // prevent other controllers from handling this request
         var data = event && event.data || {};
         var handle = data.db_id;
         if (handle) {
@@ -491,8 +555,19 @@ var BasicController = AbstractController.extend(FieldManagerMixin, {
             this.model.reload(handle).then(this._confirmSave.bind(this, handle));
         } else {
             // no db_id given, so reload the main record
-            this.reload({fieldNames: data.fieldNames});
+            this.reload({
+                fieldNames: data.fieldNames,
+                keepChanges: data.keepChanges || false,
+            });
         }
+    },
+    /**
+     * @private
+     * @param {OdooEvent} ev
+     */
+    _onSetDirty: function (ev) {
+        ev.stopPropagation(); // prevent other controllers from handling this request
+        this.model.setDirty(ev.data.dataPointID);
     },
     /**
      * Handler used to get all the data necessary when a custom action is
@@ -512,6 +587,8 @@ var BasicController = AbstractController.extend(FieldManagerMixin, {
      * @param {OdooEvent} event
      */
     _onTranslate: function (event) {
+        event.stopPropagation();
+        var self = this;
         var record = this.model.get(event.data.id, {raw: true});
         this._rpc({
             route: '/web/dataset/call_button',
@@ -520,7 +597,16 @@ var BasicController = AbstractController.extend(FieldManagerMixin, {
                 method: 'translate_fields',
                 args: [record.model, record.res_id, event.data.fieldName, record.getContext()],
             }
-        }).then(this.do_action.bind(this));
+        }).then(function (result) {
+            self.do_action(result, {
+                on_reverse_breadcrumb: function () {
+                    if (self.renderer.alertFields.length) {
+                        self.renderer.displayTranslationAlert();
+                    }
+                    return false
+                },
+            })
+        });
     },
 });
 

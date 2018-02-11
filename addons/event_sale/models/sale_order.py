@@ -10,7 +10,8 @@ class SaleOrder(models.Model):
     def action_confirm(self):
         self.ensure_one()
         res = super(SaleOrder, self).action_confirm()
-        self.order_line._update_registrations(confirm=False, cancel_to_draft=False)
+        # confirm registration if it was free (otherwise it will be confirmed once invoice fully paid)
+        self.order_line._update_registrations(confirm=self.amount_total == 0, cancel_to_draft=False)
         if any(self.order_line.filtered(lambda line: line.event_id)):
             return self.env['ir.actions.act_window'].with_context(default_sale_order_id=self.id).for_xml_id('event_sale', 'action_sale_order_event_registration')
         return res
@@ -41,7 +42,7 @@ class SaleOrderLine(models.Model):
         registrations linked to this line. This method update existing registrations
         and create new one for missing one. """
         Registration = self.env['event.registration']
-        registrations = Registration.search([('sale_order_line_id', 'in', self.ids)])
+        registrations = Registration.search([('sale_order_line_id', 'in', self.ids), ('state', '!=', 'cancel')])
         for so_line in self.filtered('event_id'):
             existing_registrations = registrations.filtered(lambda self: self.sale_order_line_id.id == so_line.id)
             if confirm:

@@ -16,9 +16,10 @@ odoo.define('web.PivotModel', function (require) {
  * @todo add a full description/specification of the data layout
  */
 
-var core = require('web.core');
-var utils = require('web.utils');
 var AbstractModel = require('web.AbstractModel');
+var core = require('web.core');
+var session = require('web.session');
+var utils = require('web.utils');
 
 var _t = core._t;
 
@@ -127,20 +128,21 @@ var PivotModel = AbstractModel.extend({
         });
     },
     /**
+     * Export the current pivot view in a simple JS object.
+     *
      * @returns {Object}
      */
     exportData: function () {
-        var record = this.data;
-        var measureNbr = record.measures.length;
-        var headers = this.renderer._computeHeaders();
+        var measureNbr = this.data.measures.length;
+        var headers = this._computeHeaders();
         var measureRow = measureNbr > 1 ? _.last(headers) : [];
-        var rows = this.renderer._computeRows();
+        var rows = this._computeRows();
         var i, j, value;
         headers[0].splice(0,1);
 
         // process measureRow
         for (i = 0; i < measureRow.length; i++) {
-            measureRow[i].measure = this.measures[measureRow[i].measure].string;
+            measureRow[i].measure = this.fields[measureRow[i].measure].string;
         }
         // process all rows
         for (i =0, j, value; i < rows.length; i++) {
@@ -148,7 +150,7 @@ var PivotModel = AbstractModel.extend({
                 value = rows[i].values[j];
                 rows[i].values[j] = {
                     is_bold: (i === 0) ||
-                        ((record.data.main_col.width > 1) &&
+                        ((this.data.main_col.width > 1) &&
                          (j >= rows[i].values.length - measureNbr)),
                     value:  (value === undefined) ? "" : value,
                 };
@@ -159,7 +161,6 @@ var PivotModel = AbstractModel.extend({
             measure_row: measureRow,
             rows: rows,
             nbr_measures: measureNbr,
-            title: this.title,
         };
     },
     /**
@@ -189,6 +190,8 @@ var PivotModel = AbstractModel.extend({
         }
         return {
             colGroupBys: this.data.main_col.groupbys,
+            context: this.data.context,
+            domain: this.data.domain,
             fields: this.fields,
             headers: !isRaw && this._computeHeaders(),
             has_data: true,
@@ -220,20 +223,18 @@ var PivotModel = AbstractModel.extend({
      */
     load: function (params) {
         this.initialDomain = params.domain;
-        this.initialRowGroupBys = params.rowGroupBys;
-        this.initialColGroupBys = params.colGroupBys;
-        this.initialMeasures = params.measures;
+        this.initialRowGroupBys = params.context.pivot_row_groupby || params.rowGroupBys;
         this.fields = params.fields;
         this.modelName = params.modelName;
-        var groupedBy = params.groupedBy.length ? params.groupedBy : this.initialRowGroupBys;
         this.data = {
             domain: params.domain,
-            context: params.context,
-            groupedBy: groupedBy,
-            colGroupBys: params.colGroupBys || this.initialColGroupBys,
-            measures: this.initialMeasures,
+            context: _.extend({}, session.user_context, params.context),
+            groupedBy: params.groupedBy,
+            colGroupBys: params.context.pivot_column_groupby || params.colGroupBys,
+            measures: this._processMeasures(params.context.pivot_measures) || params.measures,
             sorted_column: {},
         };
+        this.defaultGroupedBy = params.groupedBy;
         return this._loadData();
     },
     /**
@@ -244,13 +245,19 @@ var PivotModel = AbstractModel.extend({
      */
     reload: function (handle, params) {
         var self = this;
+        if ('context' in params) {
+            this.data.context = params.context;
+            this.data.colGroupBys = params.context.pivot_column_groupby || this.data.colGroupBys;
+            this.data.groupedBy = params.context.pivot_row_groupby || this.data.groupedBy;
+            this.data.measures = this._processMeasures(params.context.pivot_measures) || this.data.measures;
+        }
         if ('domain' in params) {
             this.data.domain = params.domain;
         } else {
             this.data.domain = this.initialDomain;
         }
         if ('groupBy' in params) {
-            this.data.groupedBy = params.groupBy;
+            this.data.groupedBy = params.groupBy.length ? params.groupBy : this.defaultGroupedBy;
         }
         if (!this.data.has_data) {
             return this._loadData();
@@ -260,7 +267,7 @@ var PivotModel = AbstractModel.extend({
         var old_col_root = this.data.main_col.root;
         return this._loadData().then(function () {
             var new_groupby_length;
-            if (!('groupBy' in params)) {
+            if (!('groupBy' in params) && !('pivot_row_groupby' in (params.context || {}))) {
                 // we only update the row groupbys according to the old groupbys
                 // if we don't have the key 'groupBy' in params.  In that case,
                 // we want to have the full open state for the groupbys.
@@ -514,7 +521,7 @@ var PivotModel = AbstractModel.extend({
     _loadData: function () {
         var self = this;
         var groupBys = [];
-        var rowGroupBys = this.data.groupedBy;
+        var rowGroupBys = this.data.groupedBy.length ? this.data.groupedBy : this.initialRowGroupBys;
         var colGroupBys = this.data.colGroupBys;
         var fields = [].concat(rowGroupBys, colGroupBys, this.data.measures);
 
@@ -591,7 +598,7 @@ var PivotModel = AbstractModel.extend({
         });
 
         var index = 0;
-        var rowGroupBys = this.data.groupedBy;
+        var rowGroupBys = this.data.groupedBy.length ? this.data.groupedBy : this.initialRowGroupBys;
         var colGroupBys = this.data.colGroupBys;
         var datapt, row, col, attrs, cell_value;
         var main_row_header, main_col_header;
@@ -646,6 +653,29 @@ var PivotModel = AbstractModel.extend({
 
         this.data.main_row.root = main_row_header;
         this.data.main_col.root = main_col_header;
+    },
+    /**
+     * In the preview implementation of the pivot view (a.k.a. version 2),
+     * the virtual field used to display the number of records was named
+     * __count__, whereas __count is actually the one used in xml. So
+     * basically, activating a filter specifying __count as measures crashed.
+     * Unfortunately, as __count__ was used in the JS, all filters saved as
+     * favorite at that time were saved with __count__, and not __count.
+     * So in order the make them still work with the new implementation, we
+     * handle both __count__ and __count.
+     *
+     * This function replaces in the given array of measures occurences of
+     * '__count__' by '__count'.
+     *
+     * @param {Array[string] || undefined} measures
+     * @return {Array[string] || undefined}
+     */
+    _processMeasures: function (measures) {
+        if (measures) {
+            return _.map(measures, function (measure) {
+                return measure === '__count__' ? '__count' : measure;
+            });
+        }
     },
     /**
      * Format a value to a usable string, for the renderer to display.

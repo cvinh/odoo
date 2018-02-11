@@ -1,8 +1,11 @@
 # -*- coding: utf-8 -*-
 # Part of Odoo. See LICENSE file for full copyright and licensing details.
-
+import unittest
 from odoo.addons.stock_landed_costs.tests.common import TestStockLandedCostsCommon
+from odoo.tests import tagged
 
+
+@tagged('post_install', '-at_install')
 class TestLandedCosts(TestStockLandedCostsCommon):
 
     def setUp(self):
@@ -45,6 +48,10 @@ class TestLandedCosts(TestStockLandedCostsCommon):
             'location_dest_id': self.customer_location_id})
 
     def test_00_landed_costs_on_incoming_shipment(self):
+        chart_of_accounts = self.env.user.company_id.chart_template_id
+        generic_coa = self.env.ref('l10n_generic_coa.configurable_chart_template')
+        if chart_of_accounts != generic_coa:
+            raise unittest.SkipTest('Skip this test as it works only with %s (%s loaded)' % (generic_coa.name, chart_of_accounts.name))
         """ Test landed cost on incoming shipment """
         #
         # (A) Purchase product
@@ -94,6 +101,11 @@ class TestLandedCosts(TestStockLandedCostsCommon):
         self.assertEqual(account_entry['debit'], 430.0, 'Wrong Account Entry')
 
     def test_01_negative_landed_costs_on_incoming_shipment(self):
+        chart_of_accounts = self.env.user.company_id.chart_template_id
+        generic_coa = self.env.ref('l10n_generic_coa.configurable_chart_template')
+        if chart_of_accounts != generic_coa:
+            raise unittest.SkipTest('Skip this test as it works only with %s (%s loaded)' % (generic_coa.name, chart_of_accounts.name))
+
         """ Test negative landed cost on incoming shipment """
         #
         # (A) Purchase Product
@@ -218,7 +230,9 @@ class TestLandedCosts(TestStockLandedCostsCommon):
         # Confirm incoming shipment.
         self.picking_in.action_confirm()
         # Transfer incoming shipment
-        self.picking_in.do_transfer()
+        res_dict = self.picking_in.button_validate()
+        wizard = self.env[(res_dict.get('res_model'))].browse(res_dict.get('res_id'))
+        wizard.process()
         return self.picking_in
 
     def _process_outgoing_shipment(self):
@@ -228,7 +242,10 @@ class TestLandedCosts(TestStockLandedCostsCommon):
         # Product assign to outgoing shipments
         self.picking_out.action_assign()
         # Transfer picking.
-        self.picking_out.do_transfer()
+
+        res_dict = self.picking_out.button_validate()
+        wizard = self.env[(res_dict.get('res_model'))].browse(res_dict.get('res_id'))
+        wizard.process()
 
     def _create_landed_costs(self, value, picking_in):
         return self.LandedCost.create(dict(

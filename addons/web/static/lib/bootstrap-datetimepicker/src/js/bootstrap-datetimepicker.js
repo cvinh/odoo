@@ -421,6 +421,12 @@
                     element.children().first().after(widget);
                 }
 
+                // !! ODOO FIX START !!
+                var parentOffset = parent.offset();
+                position.top = offset.top - parentOffset.top;
+                position.left = offset.left - parentOffset.left;
+                // !! ODOO FIX END !!
+
                 // Top and bottom logic
                 if (vertical === 'auto') {
                     if (offset.top + widget.height() * 1.5 >= $(window).height() + $(window).scrollTop() &&
@@ -473,8 +479,12 @@
             },
 
             notifyEvent = function (e) {
-                if (e.type === 'dp.change' && ((e.date && e.date.isSame(e.oldDate)) || (!e.date && !e.oldDate))) {
-                    return;
+                if (e.type === 'dp.change') {
+                    // check _isUTC flag to ensure that we are not comparing apples and oranges
+                    var bothUTC = e.date && e.oldDate && e.date._isUTC === e.oldDate._isUTC; 
+                    if ((bothUTC && e.date.isSame(e.oldDate)) || (!e.date && !e.oldDate)) {
+                        return;
+                    }
                 }
                 element.trigger(e);
             },

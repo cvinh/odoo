@@ -6,7 +6,7 @@ from itertools import chain
 from odoo import api, fields, models, tools, _
 from odoo.exceptions import UserError, ValidationError
 
-import odoo.addons.decimal_precision as dp
+from odoo.addons import decimal_precision as dp
 
 from odoo.tools import pycompat
 
@@ -90,7 +90,7 @@ class Pricelist(models.Model):
         results = {}
         for pricelist in pricelists:
             subres = pricelist._compute_price_rule(products_qty_partner, date=date, uom_id=uom_id)
-            for product_id, price in pycompat.items(subres):
+            for product_id, price in subres.items():
                 results.setdefault(product_id, {})
                 results[product_id][pricelist.id] = price
         return results
@@ -108,13 +108,12 @@ class Pricelist(models.Model):
         """
         self.ensure_one()
         if not date:
-            date = self._context.get('date', fields.Date.today())
+            date = self._context.get('date') or fields.Date.context_today(self)
         if not uom_id and self._context.get('uom'):
             uom_id = self._context['uom']
         if uom_id:
             # rebrowse with uom if given
-            product_ids = [item[0].id for item in products_qty_partner]
-            products = self.env['product.product'].with_context(uom=uom_id).browse(product_ids)
+            products = [item[0].with_context(uom=uom_id) for item in products_qty_partner]
             products_qty_partner = [(products[index], data_struct[1], data_struct[2]) for index, data_struct in enumerate(products_qty_partner)]
         else:
             products = [item[0] for item in products_qty_partner]
@@ -255,11 +254,11 @@ class Pricelist(models.Model):
         self.ensure_one()
         return {
             product_id: res_tuple[0]
-            for product_id, res_tuple in pycompat.items(self._compute_price_rule(
+            for product_id, res_tuple in self._compute_price_rule(
                 list(pycompat.izip(products, quantities, partners)),
                 date=date,
                 uom_id=uom_id
-            ))
+            ).items()
         }
 
     def get_product_price(self, product, quantity, partner, date=False, uom_id=False):
@@ -281,7 +280,7 @@ class Pricelist(models.Model):
     @api.multi
     def price_get(self, prod_id, qty, partner=None):
         """ Multi pricelist, mono product - returns price per pricelist """
-        return {key: price[0] for key, price in pycompat.items(self.price_rule_get(prod_id, qty, partner=partner))}
+        return {key: price[0] for key, price in self.price_rule_get(prod_id, qty, partner=partner).items()}
 
     @api.multi
     def price_rule_get_multi(self, products_by_qty_by_partner):
@@ -345,7 +344,7 @@ class ResCountryGroup(models.Model):
 class PricelistItem(models.Model):
     _name = "product.pricelist.item"
     _description = "Pricelist item"
-    _order = "applied_on, min_quantity desc, categ_id desc"
+    _order = "applied_on, min_quantity desc, categ_id desc, id"
 
     product_tmpl_id = fields.Many2one(
         'product.template', 'Product Template', ondelete='cascade',
@@ -368,9 +367,6 @@ class PricelistItem(models.Model):
         ('0_product_variant', 'Product Variant')], "Apply On",
         default='3_global', required=True,
         help='Pricelist Item applicable on selected option')
-    sequence = fields.Integer(
-        'Sequence', default=5, required=True,
-        help="Gives the order in which the pricelist items will be checked. The evaluation gives highest priority to lowest sequence and stops as soon as a matching item is found.")
     base = fields.Selection([
         ('list_price', 'Public Price'),
         ('standard_price', 'Cost'),
@@ -449,7 +445,7 @@ class PricelistItem(models.Model):
         elif self.compute_price == 'percentage':
             self.price = _("%s %% discount") % (self.percent_price)
         else:
-            self.price = _("%s %% discount and %s surcharge") % (abs(self.price_discount), self.price_surcharge)
+            self.price = _("%s %% discount and %s surcharge") % (self.price_discount, self.price_surcharge)
 
     @api.onchange('applied_on')
     def _onchange_applied_on(self):

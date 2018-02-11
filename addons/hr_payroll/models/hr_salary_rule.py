@@ -36,6 +36,7 @@ class HrPayrollStructure(models.Model):
             raise ValidationError(_('Error ! You cannot create a recursive Salary Structure.'))
 
     @api.multi
+    @api.returns('self', lambda value: value.id)
     def copy(self, default=None):
         self.ensure_one()
         default = dict(default or {}, code=_("%s (copy)") % (self.code))
@@ -177,7 +178,7 @@ class HrSalaryRule(models.Model):
 
     #TODO should add some checks on the type of result (should be float)
     @api.multi
-    def compute_rule(self, localdict):
+    def _compute_rule(self, localdict):
         """
         :param localdict: dictionary containing the environement in which to compute the rule
         :return: returns a tuple build as the base/amount computed, the quantity and the rate
@@ -204,7 +205,7 @@ class HrSalaryRule(models.Model):
                 raise UserError(_('Wrong python code defined for salary rule %s (%s).') % (self.name, self.code))
 
     @api.multi
-    def satisfy_condition(self, localdict):
+    def _satisfy_condition(self, localdict):
         """
         @param contract_id: id of hr.contract to be tested
         @return: returns True if the given rule match the condition for the given contract. Return False otherwise.

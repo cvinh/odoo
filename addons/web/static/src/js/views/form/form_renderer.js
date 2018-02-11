@@ -4,6 +4,7 @@ odoo.define('web.FormRenderer', function (require) {
 var BasicRenderer = require('web.BasicRenderer');
 var config = require('web.config');
 var core = require('web.core');
+var dom = require('web.dom');
 
 var _t = core._t;
 var qweb = core.qweb;
@@ -12,19 +13,52 @@ var FormRenderer = BasicRenderer.extend({
     className: "o_form_view",
     events: _.extend({}, BasicRenderer.prototype.events, {
         'click .o_notification_box .oe_field_translate': '_onTranslate',
+        'click .oe_title, .o_inner_group': '_onClick',
     }),
     /**
      * @override
      */
-    init: function (parent, state, params) {
+    init: function () {
         this._super.apply(this, arguments);
         this.idsForLabels = {};
+    },
+    /**
+     * @override
+     */
+    start: function () {
+        if (config.device.size_class <= config.device.SIZES.XXS) {
+            this.$el.addClass('o_xxs_form_view');
+        }
+        return this._super.apply(this, arguments);
     },
 
     //--------------------------------------------------------------------------
     // Public
     //--------------------------------------------------------------------------
 
+    /**
+     * Focuses the field having attribute 'default_focus' set, if any, or the
+     * first focusable field otherwise.
+     */
+    autofocus: function () {
+        if (this.mode === 'readonly') {
+            return;
+        }
+        var focusWidget = this.defaultFocusField;
+        if (!focusWidget || !focusWidget.isFocusable()) {
+            var widgets = this.allFieldWidgets[this.state.id];
+            for (var i = 0; i < (widgets ? widgets.length : 0); i++) {
+                var widget = widgets[i];
+                if (widget.isFocusable()) {
+                    focusWidget = widget;
+                    break;
+                }
+            }
+        }
+        if (focusWidget) {
+            focusWidget.activate({noselect: true});
+        }
+    },
     /**
      * Extend the method so that labels also receive the 'o_field_invalid' class
      * if necessary.
@@ -55,13 +89,13 @@ var FormRenderer = BasicRenderer.extend({
      * Show a warning message if the user modified a translated field.  For each
      * field, the notification provides a link to edit the field's translations.
      *
-     * @param {Object[]} alertFields: field list
+     * @param {Object[]} alertFields field list
      */
-    displayTranslationAlert: function (alertFields) {
+    displayTranslationAlert: function () {
         this.$('.o_notification_box').remove();
         var $notification = $(qweb.render('notification-box', {type: 'info'}))
             .append(qweb.render('translation-alert', {
-                fields: alertFields,
+                fields: this.alertFields,
                 lang: _t.database.parameters.name
             }));
         if (this.$('.o_form_statusbar').length) {
@@ -84,8 +118,27 @@ var FormRenderer = BasicRenderer.extend({
             _.each(resetWidgets, function (widget) {
                 self._setIDForLabel(widget, self.idsForLabels[widget.name]);
             });
+            if (self.$('.o_field_invalid').length) {
+                self.canBeSaved(self.state.id);
+            }
             return resetWidgets;
         });
+    },
+    /**
+     * Disable statusbar buttons and stat buttons so that they can't be clicked anymore
+     *
+     */
+    disableButtons: function () {
+        this.$('.o_statusbar_buttons button, .oe_button_box button')
+            .attr('disabled', true);
+    },
+    /**
+     * Enable statusbar buttons and stat buttons so they can be clicked again
+     *
+     */
+    enableButtons: function () {
+        this.$('.o_statusbar_buttons button, .oe_button_box button')
+            .removeAttr('disabled');
     },
     /**
      * returns the active tab pages for each notebook
@@ -156,6 +209,26 @@ var FormRenderer = BasicRenderer.extend({
     //--------------------------------------------------------------------------
 
     /**
+     * Add a tooltip on a button
+     *
+     * @private
+     * @param {Object} node
+     * @param {jQuery} $button
+     */
+    _addButtonTooltip: function (node, $button) {
+        var self = this;
+        $button.tooltip({
+            delay: { show: 1000, hide: 0 },
+            title: function () {
+                return qweb.render('WidgetButton.tooltip', {
+                    debug: config.debug,
+                    state: self.state,
+                    node: node,
+                });
+            },
+        });
+    },
+    /**
      * @private
      * @param {jQueryElement} $el
      * @param {Object} node
@@ -166,7 +239,6 @@ var FormRenderer = BasicRenderer.extend({
             self.trigger_up('button_clicked', {
                 attrs: node.attrs,
                 record: self.state,
-                show_wow: self.$el.hasClass('o_wow'),  // TODO: implement this (in view)
             });
         });
     },
@@ -184,16 +256,14 @@ var FormRenderer = BasicRenderer.extend({
         return idForLabel;
     },
     /**
+     * @override
      * @private
-     * @param {jQueryElement} $el
-     * @param {Object} node
      */
-    _handleAttributes: function ($el, node) {
-        if (node.attrs.class) {
-            $el.addClass(node.attrs.class);
-        }
-        if (node.attrs.style) {
-            $el.attr('style', node.attrs.style);
+    _postProcessField: function (widget, node) {
+        this._setIDForLabel(widget, this._getIDForLabel(node.attrs.name));
+        this._handleAttributes(widget.$el, node);
+        if (JSON.parse(node.attrs.default_focus || "0")) {
+            this.defaultFocusField = widget;
         }
     },
     /**
@@ -204,10 +274,6 @@ var FormRenderer = BasicRenderer.extend({
     _renderButtonBox: function (node) {
         var self = this;
         var $result = $('<' + node.tag + '>', { 'class': 'o_not_full' });
-        // Avoid to show buttons if we are in create mode (edit mode without res_id)
-        if (this.mode === 'edit' && !this.state.res_id) {
-            return $result;
-        }
         var buttons = _.map(node.children, function (child) {
             if (child.tag === 'button') {
                 return self._renderStatButton(child);
@@ -222,7 +288,7 @@ var FormRenderer = BasicRenderer.extend({
         var visible_buttons = buttons_partition[1];
 
         // Get the unfolded buttons according to window size
-        var nb_buttons = [2, 4, 6, 7][config.device.size_class];
+        var nb_buttons = [2, 2, 4, 6, 7][config.device.size_class];
         var unfolded_buttons = visible_buttons.slice(0, nb_buttons).concat(invisible_buttons);
 
         // Get the folded buttons
@@ -262,23 +328,6 @@ var FormRenderer = BasicRenderer.extend({
         return $result;
     },
     /**
-     * @override
-     * @private
-     * @param {string} node
-     * @param {Object} record
-     * @param {Object} [options]
-     * @returns {AbstractField}
-     */
-    _renderFieldWidget: function (node, record, options, modifiersOptions) {
-        var widget = this._super.apply(this, arguments);
-        this._setIDForLabel(widget, this._getIDForLabel(node.attrs.name));
-        this._handleAttributes(widget.$el, node);
-        if (JSON.parse(node.attrs.default_focus || "0")) {
-            this.defaultFocusField = widget;
-        }
-        return widget;
-    },
-    /**
      * @private
      * @param {Object} node
      * @returns {jQueryElement}
@@ -302,6 +351,11 @@ var FormRenderer = BasicRenderer.extend({
         this._addOnClickAction($button, node);
         this._handleAttributes($button, node);
         this._registerModifiers(node, this.state, $button);
+
+        // Display tooltip
+        if (config.debug || node.attrs.help) {
+            this._addButtonTooltip(node, $button);
+        }
         return $button;
     },
     /**
@@ -315,6 +369,9 @@ var FormRenderer = BasicRenderer.extend({
         _.each(node.children, function (child) {
             if (child.tag === 'button') {
                 $buttons.append(self._renderHeaderButton(child));
+            }
+            if (child.tag === 'widget') {
+                $buttons.append(self._renderTagWidget(child));
             }
         });
         return $buttons;
@@ -398,8 +455,8 @@ var FormRenderer = BasicRenderer.extend({
      * @returns {jQueryElement}
      */
     _renderInnerGroupField: function (node) {
-        var widget = this._renderFieldWidget(node, this.state);
-        var $tds = $('<td/>').append(widget.$el);
+        var $el = this._renderFieldWidget(node, this.state);
+        var $tds = $('<td/>').append($el);
 
         if (node.attrs.nolabel !== '1') {
             var $labelTd = this._renderInnerGroupLabel(node);
@@ -502,18 +559,21 @@ var FormRenderer = BasicRenderer.extend({
      * @returns {jQueryElement}
      */
     _renderTagButton: function (node) {
-        var widget = {
-            node: node,
-            string: (node.attrs.string || '').replace(/_/g, '')
-        };
-        if (node.attrs.icon) {
-            widget.fa_icon = node.attrs.icon.indexOf('fa-') === 0;
-        }
-        var $button = $(qweb.render('WidgetButton', {widget: widget}));
+        var $button = dom.renderButton({
+            attrs: _.omit(node.attrs, 'icon', 'string'),
+            icon: node.attrs.icon,
+            text: (node.attrs.string || '').replace(/_/g, ''),
+        });
         $button.append(_.map(node.children, this._renderNode.bind(this)));
         this._addOnClickAction($button, node);
         this._handleAttributes($button, node);
         this._registerModifiers(node, this.state, $button);
+
+        // Display tooltip
+        if (config.debug || node.attrs.help) {
+            this._addButtonTooltip(node, $button);
+        }
+
         return $button;
     },
     /**
@@ -522,7 +582,7 @@ var FormRenderer = BasicRenderer.extend({
      * @returns {jQueryElement}
      */
     _renderTagField: function (node) {
-        return this._renderFieldWidget(node, this.state).$el;
+        return this._renderFieldWidget(node, this.state);
     },
     /**
      * @private
@@ -576,10 +636,12 @@ var FormRenderer = BasicRenderer.extend({
         $statusbar.append(this._renderHeaderButtons(node));
         _.each(node.children, function (child) {
             if (child.tag === 'field') {
-                var widget = self._renderFieldWidget(child, self.state);
-                $statusbar.append(widget.$el);
+                var $el = self._renderFieldWidget(child, self.state);
+                $statusbar.append($el);
             }
         });
+        this._handleAttributes($statusbar, node);
+        this._registerModifiers(node, this.state, $statusbar);
         return $statusbar;
     },
     /**
@@ -643,6 +705,7 @@ var FormRenderer = BasicRenderer.extend({
         var self = this;
         var $headers = $('<ul class="nav nav-tabs">');
         var $pages = $('<div class="tab-content nav nav-tabs">');
+        var autofocusTab = -1;
         // renderedTabs is used to aggregate the generated $headers and $pages
         // alongside their node, so that their modifiers can be registered once
         // all tabs have been rendered, to ensure that the first visible tab
@@ -651,9 +714,8 @@ var FormRenderer = BasicRenderer.extend({
             var pageID = _.uniqueId('notebook_page_');
             var $header = self._renderTabHeader(child, pageID);
             var $page = self._renderTabPage(child, pageID);
-            if (index === 0) {
-                $header.addClass('active');
-                $page.addClass('active');
+            if (autofocusTab === -1 && child.attrs.autofocus === 'autofocus') {
+                autofocusTab = index;
             }
             self._handleAttributes($header, child);
             $headers.append($header);
@@ -664,6 +726,11 @@ var FormRenderer = BasicRenderer.extend({
                 node: child,
             };
         });
+        if (renderedTabs.length) {
+            var tabToFocus = renderedTabs[Math.max(0, autofocusTab)];
+            tabToFocus.$header.addClass('active');
+            tabToFocus.$page.addClass('active');
+        }
         // register the modifiers for each tab
         _.each(renderedTabs, function (tab) {
             self._registerModifiers(tab.node, self.state, tab.$header, {
@@ -679,10 +746,12 @@ var FormRenderer = BasicRenderer.extend({
                 },
             });
         });
-        return $('<div class="o_notebook">')
+        var $notebook = $('<div class="o_notebook">')
                 .data('name', node.attrs.name || '_default_')
-                .append($headers)
-                .append($pages);
+                .append($headers, $pages);
+        this._registerModifiers(node, this.state, $notebook);
+        this._handleAttributes($notebook, node);
+        return $notebook;
     },
     /**
      * @private
@@ -690,7 +759,10 @@ var FormRenderer = BasicRenderer.extend({
      * @returns {jQueryElement}
      */
     _renderTagSeparator: function (node) {
-        return $('<div/>').addClass('o_horizontal_separator').text(node.attrs.string);
+        var $separator = $('<div/>').addClass('o_horizontal_separator').text(node.attrs.string);
+        this._handleAttributes($separator, node);
+        this._registerModifiers(node, this.state, $separator);
+        return $separator;
     },
     /**
      * @private
@@ -699,11 +771,19 @@ var FormRenderer = BasicRenderer.extend({
      */
     _renderTagSheet: function (node) {
         this.has_sheet = true;
-        var $result = $('<div>').addClass('o_form_sheet_bg');
         var $sheet = $('<div>').addClass('o_form_sheet');
         $sheet.append(_.map(node.children, this._renderNode.bind(this)));
-        $result.append($sheet);
-        return $result;
+        return $sheet;
+    },
+    /**
+     * Instantiate custom widgets
+     *
+     * @private
+     * @param {Object} node
+     * @returns {jQueryElement}
+     */
+    _renderTagWidget: function (node) {
+        return this._renderWidget(this.state, node);
     },
     /**
      * Main entry point for the rendering.  From here, we call _renderNode on
@@ -742,28 +822,34 @@ var FormRenderer = BasicRenderer.extend({
         // Set the new content of the form view, and toggle classnames
         this.$el.html($newContent);
         this.$el.toggleClass('o_form_nosheet', !this.has_sheet);
+        if (this.has_sheet) {
+            this.$el.children().not('.oe_chatter')
+                .wrapAll($('<div/>', {class: 'o_form_sheet_bg'}));
+        }
         this.$el.toggleClass('o_form_editable', this.mode === 'edit');
         this.$el.toggleClass('o_form_readonly', this.mode === 'readonly');
 
-        // Necessary to allow all sub widgets to use their dimensions in
-        // layout related activities, such as autoresize on fieldtexts
-        core.bus.trigger('DOM_updated');
-
         // Attach the tooltips on the fields' label
-        var focusWidget = this.defaultFocusField;
         _.each(this.allFieldWidgets[this.state.id], function (widget) {
-            if (!focusWidget) {
-                focusWidget = widget;
-            }
-            if (core.debug || widget.attrs.help || widget.field.help) {
-                var idForLabel = self.idsForLabels[widget.name];
-                var $label = idForLabel ? self.$('label[for=' + idForLabel + ']') : $();
+            var idForLabel = self.idsForLabels[widget.name];
+            // We usually don't support multiple widgets for the same field on the
+            // same view but it is the case with the new settings view on V11.0.
+            // Therefore, we need to retrieve the correct label since it could be
+            // displayed multiple times on the view, otherwise, for example the
+            // enterprise label will be displayed as many times as the field
+            // exists on settings.
+            var $widgets = self.$('.o_field_widget[name=' + widget.name + ']');
+            var $label = idForLabel ? self.$('label[for=' + idForLabel + ']') : $();
+            $label = $label.eq($widgets.index(widget.$el));
+            if (config.debug || widget.attrs.help || widget.field.help) {
                 self._addFieldTooltip(widget, $label);
             }
+            if (widget.attrs.widget === 'upgrade_boolean') {
+                // this widget needs a reference to its $label to be correctly
+                // rendered
+                widget.renderWithLabel($label);
+            }
         });
-        if (focusWidget) {
-            focusWidget.activate({noselect: true});
-        }
     },
     /**
      * Sets id attribute of given widget to idForLabel
@@ -781,12 +867,23 @@ var FormRenderer = BasicRenderer.extend({
     //--------------------------------------------------------------------------
 
     /**
+     * Makes the Edit button bounce in readonly
+     *
+     * @private
+     */
+    _onClick: function () {
+        if (this.mode === 'readonly') {
+            this.trigger_up('bounce_edit');
+        }
+    },
+    /**
      * @override
      * @private
      * @param {OdooEvent} ev
      */
     _onNavigationMove: function (ev) {
         ev.stopPropagation();
+
         var index;
         if (ev.data.direction === "next") {
             index = this.allFieldWidgets[this.state.id].indexOf(ev.data.target);

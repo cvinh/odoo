@@ -5,12 +5,10 @@ var BasicRenderer = require('web.BasicRenderer');
 var core = require('web.core');
 var KanbanColumn = require('web.KanbanColumn');
 var KanbanRecord = require('web.KanbanRecord');
-var quick_create = require('web.kanban_quick_create');
+var ColumnQuickCreate = require('web.kanban_column_quick_create');
 var QWeb = require('web.QWeb');
 var session = require('web.session');
 var utils = require('web.utils');
-
-var ColumnQuickCreate = quick_create.ColumnQuickCreate;
 
 var qweb = core.qweb;
 
@@ -38,7 +36,7 @@ function qwebAddIf(node, condition) {
 function transformQwebTemplate(node, fields) {
     // Process modifiers
     if (node.tag && node.attrs.modifiers) {
-        var modifiers = JSON.parse(node.attrs.modifiers || "{}");
+        var modifiers = node.attrs.modifiers || {};
         if (modifiers.invisible) {
             qwebAddIf(node, _.str.sprintf("!kanban_compute_domain(%s)", JSON.stringify(modifiers.invisible)));
         }
@@ -83,6 +81,14 @@ function transformQwebTemplate(node, fields) {
 
 var KanbanRenderer = BasicRenderer.extend({
     className: 'o_kanban_view',
+    custom_events: _.extend({}, BasicRenderer.prototype.custom_events || {}, {
+        close_quick_create: '_onCloseQuickCreate',
+        cancel_quick_create: '_onCloseQuickCreate',
+        set_progress_bar_state: '_onSetProgressBarState',
+        start_quick_create: '_onStartQuickCreate',
+        quick_create_column_updated: '_onQuickCreateColumnUpdated',
+    }),
+
     /**
      * @override
      */
@@ -90,16 +96,28 @@ var KanbanRenderer = BasicRenderer.extend({
         this._super.apply(this, arguments);
 
         this.widgets = [];
-        this.qweb = new QWeb(session.debug, {_s: session.origin});
+        this.qweb = new QWeb(session.debug, {_s: session.origin}, false);
         var templates = findInNode(this.arch, function (n) { return n.tag === 'templates';});
         transformQwebTemplate(templates, state.fields);
         this.qweb.add_template(utils.json_node_to_xml(templates));
-
+        this.examples = params.examples;
         this.recordOptions = _.extend({}, params.record_options, {
             qweb: this.qweb,
             viewType: 'kanban',
         });
-        this.columnOptions = _.extend({}, params.column_options, { qweb: this.qweb });
+        this.columnOptions = _.extend({}, params.column_options);
+        if (this.columnOptions.hasProgressBar) {
+            this.columnOptions.progressBarStates = {};
+        }
+        this._setState(state);
+    },
+    /**
+     * Called each time the renderer is attached into the DOM.
+     */
+    on_attach_callback: function () {
+        if (this.quickCreate) {
+            this.quickCreate.on_attach_callback();
+        }
     },
 
     //--------------------------------------------------------------------------
@@ -108,9 +126,18 @@ var KanbanRenderer = BasicRenderer.extend({
 
     /**
      * Displays the quick create record in the first column.
+     *
+     * @returns {Deferred}
      */
     addQuickCreate: function () {
-        this.widgets[0].addQuickCreate();
+        return this.widgets[0].addQuickCreate();
+    },
+    /**
+     * Toggle fold/unfold the Column quick create widget
+     */
+    quickCreateToggleFold: function () {
+        this.quickCreate.toggleFold();
+        this._toggleNoContentHelper();
     },
     /**
      * Removes a widget (record if ungrouped, column if grouped) from the view.
@@ -126,15 +153,39 @@ var KanbanRenderer = BasicRenderer.extend({
      *
      * @param {string} localID the column id
      * @param {Object} columnState
+     * @param {Object} [options]
+     * @param {Object} [options.state] if set, this represents the new state
+     * @param {boolean} [options.openQuickCreate] if true, directly opens the
+     *   QuickCreate widget in the updated column
      *
      * @returns {Deferred}
      */
-    updateColumn: function (localID, columnState) {
-        var column = _.findWhere(this.widgets, {db_id: localID});
-        this.widgets.splice(_.indexOf(this.widgets, column), 1); // remove column from widgets' list
+    updateColumn: function (localID, columnState, options) {
+        var self = this;
         var newColumn = new KanbanColumn(this, columnState, this.columnOptions, this.recordOptions);
-        this.widgets.push(newColumn);
-        return newColumn.insertAfter(column.$el).then(column.destroy.bind(column));
+        var index = _.findIndex(this.widgets, {db_id: localID});
+        var column = this.widgets[index];
+        this.widgets[index] = newColumn;
+        if (options && options.state) {
+            this.state = options.state;
+        }
+        return newColumn.appendTo(document.createDocumentFragment()).then(function () {
+            var def;
+            if (options && options.openQuickCreate) {
+                def = newColumn.addQuickCreate();
+            }
+            return $.when(def).then(function () {
+                newColumn.$el.insertAfter(column.$el);
+                self._toggleNoContentHelper();
+                // When a record has been quick created, the new column directly
+                // renders the quick create widget (to allow quick creating several
+                // records in a row). However, as we render this column in a
+                // fragment, the quick create widget can't be correctly focused. So
+                // we manually call on_attach_callback to focus it once in the DOM.
+                newColumn.on_attach_callback();
+                column.destroy();
+            });
+        });
     },
     /**
      * Updates a given record with its new state.
@@ -160,6 +211,14 @@ var KanbanRenderer = BasicRenderer.extend({
         if (record) {
             record.update(recordState);
         }
+    },
+    /**
+     * @override
+     */
+    updateState: function (state) {
+        this._setState(state);
+        this._toggleNoContentHelper();
+        return this._super.apply(this, arguments);
     },
 
     //--------------------------------------------------------------------------
@@ -187,25 +246,6 @@ var KanbanRenderer = BasicRenderer.extend({
      */
     _renderGrouped: function (fragment) {
         var self = this;
-        var groupByFieldAttrs = this.state.fields[this.state.groupedBy[0]];
-        // Deactivate the drag'n'drop if the groupedBy field:
-        // - is a date or datetime since we group by month or
-        // - is readonly
-        var draggable = true;
-        if (groupByFieldAttrs) {
-            if (groupByFieldAttrs.type === "date" || groupByFieldAttrs.type === "datetime") {
-                draggable = false;
-            } else if (groupByFieldAttrs.readonly !== undefined) {
-                draggable = !(groupByFieldAttrs.readonly);
-            }
-        }
-        var groupedByM2O = groupByFieldAttrs && (groupByFieldAttrs.type === 'many2one');
-        var grouped_by_field = groupedByM2O && groupByFieldAttrs.relation;
-        this.columnOptions = _.extend(this.columnOptions, {
-            draggable: draggable,
-            grouped_by_m2o: groupedByM2O,
-            relation: grouped_by_field,
-        });
 
         // Render columns
         _.each(this.state.data, function (group) {
@@ -219,12 +259,16 @@ var KanbanRenderer = BasicRenderer.extend({
             }
         });
 
-        if (groupedByM2O) {
+        // remove previous sorting
+        if(this.$el.sortable('instance') !== undefined) {
+            this.$el.sortable('destroy');
+        }
+        if (this.groupedByM2O) {
             // Enable column sorting
             this.$el.sortable({
                 axis: 'x',
                 items: '> .o_kanban_group',
-                handle: '.o_kanban_header',
+                handle: '.o_kanban_header_title',
                 cursor: 'move',
                 revert: 150,
                 delay: 100,
@@ -233,19 +277,39 @@ var KanbanRenderer = BasicRenderer.extend({
                 stop: function () {
                     var ids = [];
                     self.$('.o_kanban_group').each(function (index, u) {
-                        ids.push($(u).data('id'));
+                        // Ignore 'Undefined' column
+                        if (_.isNumber($(u).data('id'))) {
+                            ids.push($(u).data('id'));
+                        }
                     });
                     self.trigger_up('resequence_columns', {ids: ids});
                 },
             });
 
             // Enable column quickcreate
-            if (this.columnOptions.group_creatable) {
-                var quickCreate = new ColumnQuickCreate(this);
-                quickCreate.appendTo(fragment);
+            if (this.createColumnEnabled) {
+                this.quickCreate = new ColumnQuickCreate(this, {
+                    examples: this.examples,
+                });
+                this.quickCreate.appendTo(fragment).then(function () {
+                    // Open it directly if there is no column yet
+                    if (!self.state.data.length) {
+                        self.quickCreate.toggleFold();
+                    }
+                });
+
             }
         }
-
+    },
+    /**
+     * @private
+     * @override
+     * adds a specific class to the kanban helper so that it can be targetted by specific css
+     */
+    _renderNoContentHelper: function() {
+        var $el = this._super.apply(this, arguments);
+        $el.toggleClass('o_kanban_view_nocontent',true)
+        return $el;
     },
     /**
      * Renders an ungrouped kanban view in a fragment.
@@ -271,19 +335,126 @@ var KanbanRenderer = BasicRenderer.extend({
     _renderView: function () {
         var oldWidgets = this.widgets;
         this.widgets = [];
+        this.$el.empty();
+
         var isGrouped = !!this.state.groupedBy.length;
         this.$el.toggleClass('o_kanban_grouped', isGrouped);
         this.$el.toggleClass('o_kanban_ungrouped', !isGrouped);
-        this.$el.empty();
-
         var fragment = document.createDocumentFragment();
+        // render the kanban view
         if (isGrouped) {
             this._renderGrouped(fragment);
         } else {
             this._renderUngrouped(fragment);
         }
         this.$el.append(fragment);
+        this._toggleNoContentHelper();
         return this._super.apply(this, arguments).then(_.invoke.bind(_, oldWidgets, 'destroy'));
+    },
+    /**
+     * @param {boolean} [remove] if true, the nocontent helper is always removed
+     * @private
+     */
+    _toggleNoContentHelper: function (remove) {
+        var displayNoContentHelper =
+            !remove &&
+            !this._hasContent() &&
+            !!this.noContentHelp &&
+            !(this.quickCreate && !this.quickCreate.folded);
+
+        var $noContentHelper = this.$('.o_view_nocontent');
+
+        if (displayNoContentHelper && !$noContentHelper.length) {
+            this.$el.append(this._renderNoContentHelper());
+        }
+        if (!displayNoContentHelper && $noContentHelper.length) {
+            $noContentHelper.remove();
+        }
+    },
+    /**
+     * Sets the current state and updates some internal attributes accordingly.
+     *
+     * @private
+     * @param {Object} state
+     */
+    _setState: function (state) {
+        this.state = state;
+
+        var groupByField = state.groupedBy[0];
+        var groupByFieldAttrs = state.fields[groupByField];
+        var groupByFieldInfo = state.fieldsInfo.kanban[groupByField];
+        // Deactivate the drag'n'drop if the groupedBy field:
+        // - is a date or datetime since we group by month or
+        // - is readonly (on the field attrs or in the view)
+        var draggable = true;
+        if (groupByFieldAttrs) {
+            if (groupByFieldAttrs.type === "date" || groupByFieldAttrs.type === "datetime") {
+                draggable = false;
+            } else if (groupByFieldAttrs.readonly !== undefined) {
+                draggable = !(groupByFieldAttrs.readonly);
+            }
+        }
+        if (groupByFieldInfo) {
+            if (draggable && groupByFieldInfo.readonly !== undefined) {
+                draggable = !(groupByFieldInfo.readonly);
+            }
+        }
+        this.groupedByM2O = groupByFieldAttrs && (groupByFieldAttrs.type === 'many2one');
+        var relation = this.groupedByM2O && groupByFieldAttrs.relation;
+        var groupByTooltip = groupByFieldInfo && groupByFieldInfo.options.group_by_tooltip;
+        this.columnOptions = _.extend(this.columnOptions, {
+            draggable: draggable,
+            group_by_tooltip: groupByTooltip,
+            groupedBy: groupByField,
+            grouped_by_m2o: this.groupedByM2O,
+            relation: relation,
+        });
+        this.createColumnEnabled = this.groupedByM2O && this.columnOptions.group_creatable;
+    },
+
+    //--------------------------------------------------------------------------
+    // Handlers
+    //--------------------------------------------------------------------------
+
+    /**
+     * Closes the opened quick create widgets in columns
+     *
+     * @private
+     */
+    _onCloseQuickCreate: function () {
+        if (this.state.groupedBy.length) {
+            _.invoke(this.widgets, 'cancelQuickCreate');
+        }
+        this._toggleNoContentHelper();
+    },
+    /**
+     * @private
+     * @param {OdooEvent} event
+     */
+    _onQuickCreateColumnUpdated: function (event) {
+        event.stopPropagation();
+        this._toggleNoContentHelper();
+    },
+    /**
+     * Updates progressbar internal states (necessary for animations) with
+     * received data.
+     *
+     * @private
+     * @param {OdooEvent} ev
+     */
+    _onSetProgressBarState: function (ev) {
+        if (!this.columnOptions.progressBarStates[ev.data.columnID]) {
+            this.columnOptions.progressBarStates[ev.data.columnID] = {};
+        }
+        _.extend(this.columnOptions.progressBarStates[ev.data.columnID], ev.data.values);
+    },
+    /**
+     * Closes the opened quick create widgets in columns
+     *
+     * @private
+     */
+    _onStartQuickCreate: function () {
+        this._toggleNoContentHelper(true);
     },
 });
 

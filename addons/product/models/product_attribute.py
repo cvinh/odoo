@@ -20,7 +20,7 @@ class ProductAttribute(models.Model):
 
 class ProductAttributevalue(models.Model):
     _name = "product.attribute.value"
-    _order = 'sequence, id'
+    _order = 'sequence, attribute_id, id'
 
     name = fields.Char('Value', required=True, translate=True)
     sequence = fields.Integer('Sequence', help="Determine the display order")
@@ -76,7 +76,7 @@ class ProductAttributevalue(models.Model):
 
     @api.multi
     def _variant_name(self, variable_attributes):
-        return ", ".join([v.name for v in self.sorted(key=lambda r: r.name) if v.attribute_id in variable_attributes])
+        return ", ".join([v.name for v in self if v.attribute_id in variable_attributes])
 
 
 class ProductAttributePrice(models.Model):
@@ -107,7 +107,6 @@ class ProductAttributeLine(models.Model):
         # search on a m2o and one on a m2m, probably this will quickly become
         # difficult to compute - check if performance optimization is required
         if name and operator in ('=', 'ilike', '=ilike', 'like', '=like'):
-            new_args = ['|', ('attribute_id', operator, name), ('value_ids', operator, name)]
-        else:
-            new_args = args
-        return super(ProductAttributeLine, self).name_search(name=name, args=new_args, operator=operator, limit=limit)
+            args = ['|', ('attribute_id', operator, name), ('value_ids', operator, name)]
+            return self.search(args, limit=limit).name_get()
+        return super(ProductAttributeLine, self).name_search(name=name, args=args, operator=operator, limit=limit)

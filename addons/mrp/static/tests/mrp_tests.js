@@ -31,7 +31,7 @@ QUnit.module('mrp', {
     },
 }, function () {
     QUnit.test("pdf_viewer without data", function (assert) {
-        assert.expect(3);
+        assert.expect(4);
 
         var form = createView({
             View: FormView,
@@ -48,6 +48,8 @@ QUnit.module('mrp', {
             "there should be a visible 'Upload' button");
         assert.ok(form.$('.o_field_widget iframe.o_pdfview_iframe').hasClass('o_hidden'),
             "there should be an invisible iframe");
+        assert.strictEqual(form.$('input[type="file"]').length, 1,
+            "there should be one input");
 
         form.destroy();
     });
@@ -78,7 +80,7 @@ QUnit.module('mrp', {
         assert.notOk(form.$('.o_field_widget iframe.o_pdfview_iframe').hasClass('o_hidden'),
             "there should be an visible iframe");
         assert.strictEqual(form.$('.o_field_widget iframe.o_pdfview_iframe').attr('data-src'),
-            '/web/static/lib/pdfjs/web/viewer.html?file=%2Fweb%2Fimage%3Fmodel%3Dpartner%26field%3Ddocument%26id%3D1',
+            '/web/static/lib/pdfjs/web/viewer.html?file=%2Fweb%2Fimage%3Fmodel%3Dpartner%26field%3Ddocument%26id%3D1#page=1',
             "the src attribute should be correctly set on the iframe");
 
         form.destroy();

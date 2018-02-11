@@ -41,12 +41,11 @@ The Dashboard for the Sales Manager will include
 * Monthly Turnover (Graph)
     """,
     'website': 'https://www.odoo.com/page/sales',
-    'depends': ['sale'],
+    'depends': ['sale', 'account_invoicing'],
     'data': [
-        'data/sale_management_tour.xml',
         'views/sale_management_views.xml',
-        'views/crm_team_views.xml',
         'views/sale_management_templates.xml',
     ],
     'application': True,
+    'uninstall_hook': 'uninstall_hook',
 }

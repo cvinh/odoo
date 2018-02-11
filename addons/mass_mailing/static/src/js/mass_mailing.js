@@ -16,6 +16,9 @@ KanbanRecord.include({
     _openRecord: function () {
         if (this.modelName === 'mail.mass_mailing.campaign') {
             this.$('.oe_mailings').click();
+        } else if (this.modelName === 'mail.mass_mailing.list' &&
+                   this.$('.o_mailing_list_kanban_boxes a')) {
+            this.$('.o_mailing_list_kanban_boxes a').first().click();
         } else {
             this._super.apply(this, arguments);
         }
@@ -32,17 +35,13 @@ KanbanColumn.include({
 });
 
 FieldTextHtml.include({
-    get_datarecord: function () {
+    getDatarecord: function () {
         /* Avoid extremely long URIs by whitelisting fields in the datarecord
         that get set as a get parameter */
         var datarecord = this._super();
-        if (this.view.model === 'mail.mass_mailing') {
+        if (this.model === 'mail.mass_mailing') {
             // these fields can potentially get very long, let's remove them
-            var blacklist = ['mailing_domain', 'contact_list_ids'];
-            for (var k in blacklist) {
-                delete datarecord[blacklist[k]];
-            }
-            delete datarecord[this.name];
+            datarecord = _.omit(datarecord, ['mailing_domain', 'contact_list_ids', 'body_html']);
         }
         return datarecord;
     },
