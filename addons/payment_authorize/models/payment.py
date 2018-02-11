@@ -126,7 +126,7 @@ class PaymentAcquirerAuthorize(models.Model):
         for field_name in mandatory_fields:
             if not data.get(field_name):
                 error[field_name] = 'missing'
-        if data['cc_expiry'] and datetime.now().strftime('%y%M') > datetime.strptime(data['cc_expiry'], '%M / %y').strftime('%y%M'):
+        if data['cc_expiry'] and datetime.now().strftime('%y%m') > datetime.strptime(data['cc_expiry'], '%m / %y').strftime('%y%m'):
             return False
         return False if error else True
 
@@ -256,14 +256,14 @@ class TxAuthorize(models.Model):
     def authorize_s2s_capture_transaction(self):
         self.ensure_one()
         transaction = AuthorizeAPI(self.acquirer_id)
-        tree = transaction.capture(self.acquirer_reference, self.amount)
+        tree = transaction.capture(self.acquirer_reference or '', self.amount)
         return self._authorize_s2s_validate_tree(tree)
 
     @api.multi
     def authorize_s2s_void_transaction(self):
         self.ensure_one()
         transaction = AuthorizeAPI(self.acquirer_id)
-        tree = transaction.void(self.acquirer_reference)
+        tree = transaction.void(self.acquirer_reference or '')
         return self._authorize_s2s_validate_tree(tree)
 
     @api.multi
@@ -285,15 +285,15 @@ class TxAuthorize(models.Model):
                     'acquirer_reference': tree.get('x_trans_id'),
                     'date_validate': fields.Datetime.now(),
                 })
-                if self.callback_eval and init_state != 'authorized':
-                    safe_eval(self.callback_eval, {'self': self})
+                if self.sudo().callback_eval and init_state != 'authorized':
+                    safe_eval(self.sudo().callback_eval, {'self': self})
             if tree.get('x_type').lower() == 'auth_only':
                 self.write({
                     'state': 'authorized',
                     'acquirer_reference': tree.get('x_trans_id'),
                 })
-                if self.callback_eval:
-                    safe_eval(self.callback_eval, {'self': self})
+                if self.sudo().callback_eval:
+                    safe_eval(self.sudo().callback_eval, {'self': self})
             if tree.get('x_type').lower() == 'void':
                 self.write({
                     'state': 'cancel',

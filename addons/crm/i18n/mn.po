@@ -16,8 +16,8 @@ msgid ""
 msgstr ""
 "Project-Id-Version: Odoo Server 10.0\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2016-12-14 13:41+0000\n"
-"PO-Revision-Date: 2016-12-14 13:41+0000\n"
+"POT-Creation-Date: 2017-06-23 13:26+0000\n"
+"PO-Revision-Date: 2017-06-23 13:26+0000\n"
 "Last-Translator: Tugsbiligt Lamjav <tugsbiligt@icloud.com>, 2017\n"
 "Language-Team: Mongolian (https://www.transifex.com/odoo/teams/41243/mn/)\n"
 "MIME-Version: 1.0\n"
@@ -109,11 +109,10 @@ msgid ""
 "                                <span style=\"font-style:italic;\">You’re not alone</span>\n"
 "                            </p>\n"
 "                            <p dir=\"ltr\" style=\"font-size:13px;margin-top:0pt;margin-bottom:8pt;\">\n"
-"                                <span>We would be delighted to assist you along the way. Contact us at\n"
-"                                <a href=\"mailto:help@odoo.com\"><span style=\"text-decoration:underline;\">\n"
-"                                help@odoo.com</span></a> if you have any question. You can also discover\n"
-"                                how to get the best out of Odoo CRM with our </span>\n"
-"                                <a href=\"https://www.odoo.com/documentation/user/9.0/crm.html\">\n"
+"                                <span>We would be delighted to assist you along the way. Contact us through our\n"
+"                                <a href=\"https://www.odoo.com/help\">support form</a> if you have any question.\n"
+"                                You can also discover how to get the best out of Odoo CRM with our </span>\n"
+"                                <a href=\"https://www.odoo.com/documentation/user/10.0/crm.html\">\n"
 "                                <span style=\"text-decoration:underline;\">User Documentation</span></a>\n"
 "                                </span><span> or with our </span>\n"
 "                                <a href=\"https://www.odoo.com/documentation\">\n"
@@ -141,7 +140,7 @@ msgstr ""
 "                            <img src=\"web/static/src/img/logo.png\"/>\n"
 "                        </td>\n"
 "                        <td style=\"vertical-align: top; padding: 8px 10px;text-align: left;font-size: 14px;\">\n"
-"                            <a href=\"web/login\" style=\"float:right ;margin:15px auto;background: #875A7B;border-radius: 5px;color: #ffffff;font-size: 16px;padding: 10px 20px 10px 20px;text-decoration: none;\">Автомат Нэвтрэх</a>\n"
+"                            <a href=\"web/login\" style=\"float:right ;margin:15px auto;background: #875A7B;border-radius: 5px;color: #ffffff;font-size: 16px;padding: 10px 20px 10px 20px;text-decoration: none;\">Автоматаар нэвтрэх</a>\n"
 "                        </td>\n"
 "                    </tr>\n"
 "                </tbody>\n"
@@ -154,7 +153,7 @@ msgstr ""
 "                            <p dir=\"ltr\" style=\"font-size:15px;margin-top:0pt;margin-bottom:0pt;\">\n"
 "                                <span>Таны Odoo CRM аппликэшн хэвийн ажиллаж байна.</span></p><br>\n"
 "                            <p dir=\"ltr\" style=\"margin-top:0pt;margin-bottom:8pt;\">\n"
-"                                <span style=\"font-size:13px;font-weight:bold; \">Дараа нь юу байх вэ?</span></p>\n"
+"                                <span style=\"font-size:13px;font-weight:bold; \">Дараа нь яах вэ?</span></p>\n"
 "                            <ul style=\"margin-top:0pt;margin-bottom:0pt;font-size:13px;list-style-type:disc;\">\n"
 "                                <li dir=\"ltr\">\n"
 "                                    <p dir=\"ltr\" style=\"margin-top:0pt;margin-bottom:0pt;\">\n"
@@ -166,26 +165,26 @@ msgstr ""
 "                                </li>\n"
 "                                <li dir=\"ltr\">\n"
 "                                    <p dir=\"ltr\" style=\"margin-top:0pt;margin-bottom:8pt;\">\n"
-"                                        <span>Өөрийн боломжуудыг өөрийн суваг дотроо нэг баганаас нөгөө багана руу зөөх замаар хөтлөж удирдана</span>\n"
+"                                        <span>Өөрийн боломжуудыг борлуулалтын суваг дотроо нэг баганаас нөгөө багана руу зөөх замаар хөтлөж удирдана</span>\n"
 "                                    </p>\n"
 "                                </li>\n"
 "                            </ul> <br>\n"
 "                            <p dir=\"ltr\" style=\"font-size:13px;margin-top:0pt;margin-bottom:8pt;\">\n"
-"                                <span style=\"font-weight:bold;\">Нээж судла </span>\n"
+"                                <span style=\"font-weight:bold;\"> </span>\n"
 "                                <span><a href=\"/web#view_type=list&model=crm.lead&action=crm.crm_lead_all_leads\">\n"
-"                                    <span style=\"font-weight:bold; text-decoration:underline;\">CRM төлөвлөгч</span></a></span>\n"
-"                                <span> бусад боломжийг идэвхжүүлэхдээ</span>\n"
+"                                    <span style=\"font-weight:bold; text-decoration:underline;\">CRM төлөвлөгчийг</span></a></span>\n"
+"                                <span> судлан нэмэлт боломжуудыг идэвхжүүлээрэй</span>\n"
 "                                <span style=\"color:#875A7B;margin:0;font-weight:bold\">(${user.env['web.planner'].get_planner_progress('planner_crm')}% done)</span>\n"
 "                            </p>\n"
 "                            <ul style=\"margin-top:0pt;margin-bottom:0pt;font-size:13px;list-style-type:disc;\">\n"
 "                                <li dir=\"ltr\">\n"
 "                                    <p dir=\"ltr\" style=\"margin-top:0pt;margin-bottom:0pt;\">\n"
-"                                        <span>Сэжимийг оноогоор үнэлж борлуулалтын ажилтанг автомат оноор, </span>\n"
+"                                        <span>Сэжмийг оноогоор үнэлж борлуулалтын ажилтанг автоматаар оноо, </span>\n"
 "                                    </p>\n"
 "                                </li>\n"
 "                                <li dir=\"ltr\">\n"
 "                                    <p dir=\"ltr\" style=\"margin-top:0pt;margin-bottom:0pt;\">\n"
-"                                        <span>Ирээдүйтэй захиалагчидтай оновчтой имэйлийн аяныг ашиглан байнга холбоотой байгаарай,</span>\n"
+"                                        <span>Ирээдүйтэй захиалагчидтай оновчтой имэйлийн аяныг ашиглан байнга холбоотой байгаарай, </span>\n"
 "                                    </p>\n"
 "                                </li>\n"
 "                                <li dir=\"ltr\">\n"
@@ -195,39 +194,38 @@ msgstr ""
 "                                </li>\n"
 "                                <li dir=\"ltr\">\n"
 "                                    <p dir=\"ltr\" style=\"margin-top:0pt;margin-bottom:0pt;\">\n"
-"                                        <span>Ухаалаг, нарийвчлал сайтан тайланг авах,</span>\n"
+"                                        <span>Ухаалаг тайлан, цэгцтэй хянах самбарууд,</span>\n"
 "                                    </p>\n"
 "                                </li>\n"
 "                                <li dir=\"ltr\">\n"
 "                                    <p dir=\"ltr\" style=\"margin-top:0pt;margin-bottom:8pt;\">\n"
-"                                        <span>Бөгөөд маш их илүү...</span>\n"
+"                                        <span>Энэ болон маш олон илүү...</span>\n"
 "                                    </p>\n"
 "                                </li>\n"
 "                            </ul>\n"
 "                            <br>\n"
 "                            <p dir=\"ltr\" style=\"font-size:13px;line-height:1.3;margin-top:0pt;margin-bottom:8pt;\">\n"
-"                                <span style=\"font-weight:bold;\">Тусламж хэрэгтэй?</span>\n"
+"                                <span style=\"font-weight:bold;\">Тусламж хэрэгтэй юу?</span>\n"
 "                                <span style=\"font-style:italic;\">Та ганцаараа биш</span>\n"
 "                            </p>\n"
 "                            <p dir=\"ltr\" style=\"font-size:13px;margin-top:0pt;margin-bottom:8pt;\">\n"
-"                                <span>Бид таньд үргэлж туслахдаа баяртай байх болно. Бидэнд холбоо барих: \n"
-"                                <a href=\"mailto:help@odoo.com\"><span style=\"text-decoration:underline;\">\n"
-"                                help@odoo.com</span></a> тан асуулт байвал холбогдоорой. Түүнчлэн\n"
-"                                Odoo CRM хамгийн сайн хэрэглэхийн тулд </span>\n"
-"                                <a href=\"https://www.odoo.com/documentation/user/9.0/crm.html\">\n"
+"                                <span>Бид танд туслахдаа үргэлж баяртай байх болно. Хэрэв танд асуулт байвал манай\n"
+"                                <a href=\"https://www.odoo.com/help\">дэмжлэгийн маягтаар</a> бидэнтэй холбогдоорой.\n"
+"                                Мөн та Odoo CRM - г тултал нь ашиглах зааврыг манай </span>\n"
+"                                <a href=\"https://www.odoo.com/documentation/user/10.0/crm.html\">\n"
 "                                <span style=\"text-decoration:underline;\">Хэрэглэгчийн Баримтжуулалт</span></a>\n"
-"                                </span><span> эсвэл </span>\n"
+"                                </span><span> эсвэл манай </span>\n"
 "                                <a href=\"https://www.odoo.com/documentation\">\n"
-"                                <span style=\"text-decoration:underline;\">API Баримтжуулалт</span></a>\n"
+"                                <span style=\"text-decoration:underline;\">API Баримтжуулалт</span></a> - аас аваарай.\n"
 "                            </p>\n"
 "                            <br>\n"
-"                            <p dir=\"ltr\" style=\"font-size:13px;margin-top:0pt;margin-bottom:8pt;\"><span>Odoo таатайгаар туршаарай,</span></p>\n"
+"                            <p dir=\"ltr\" style=\"font-size:13px;margin-top:0pt;margin-bottom:8pt;\"><span>Odoo-г таатайгаар туршаарай,</span></p>\n"
 "                        </td>\n"
 "                    </tr>\n"
 "                </tbody>\n"
 "            </table>\n"
 "            <div dir=\"ltr\" style=\"font-size:13px;margin-top:0pt;margin-bottom:8pt;color:grey\">\n"
-"                <span><br/>-- <br/>Odoo Баг<br/>PS: Odoo-д дуртай хүмүүс,  </span><a href=\"https://twitter.com/odoo/favorites\"><span style=\"text-decoration:underline;\">юу хэлж байгааг шалгаарай.</span></a></span>\n"
+"                <span><br/>-- <br/>Odoo Баг<br/>Жич: Хүмүүс Odoo-д дуртай байдаг, </span><a href=\"https://twitter.com/odoo/favorites\"><span style=\"text-decoration:underline;\">тэдний юу гэснийг сонирхоорой.</span></a></span>\n"
 "            </div>\n"
 "        </div>"
 
@@ -1409,7 +1407,7 @@ msgstr "Энэ захиалагчтай холбоотой боломж үүсг
 #. module: crm
 #: model:ir.actions.act_window,help:crm.crm_lost_reason_action
 msgid "Click to define a new lost reason."
-msgstr "Шинэ мартагдсан шалтгааныг тодорхойлох"
+msgstr "Ялагдсан шинэ шалтгааныг тодорхойлох"
 
 #. module: crm
 #: model:ir.actions.act_window,help:crm.crm_lead_tag_action
@@ -1445,7 +1443,7 @@ msgstr ""
 #. module: crm
 #: model:ir.model.fields,field_description:crm.field_crm_lead_date_closed
 msgid "Closed Date"
-msgstr "Хаагдсан ѳдѳр"
+msgstr "Хаагдсан Огноо"
 
 #. module: crm
 #: code:addons/crm/wizard/crm_lead_to_opportunity.py:87
@@ -1636,6 +1634,7 @@ msgstr "Ойлголтын загварыг зөвлөгчидтэй үүсгэ�
 
 #. module: crm
 #: selection:crm.lead2opportunity.partner,action:0
+#: selection:crm.lead2projectissue.wizard,action:0
 #: selection:crm.partner.binding,action:0
 msgid "Create a new customer"
 msgstr "Шинэ захиалагч үүсгэх"
@@ -1753,9 +1752,10 @@ msgid "Current Line"
 msgstr "Одоогийн шугам"
 
 #. module: crm
-#: code:addons/crm/models/crm_lead.py:1073
+#: code:addons/crm/models/crm_lead.py:1069
 #: model:ir.model.fields,field_description:crm.field_crm_lead2opportunity_partner_mass_partner_id
 #: model:ir.model.fields,field_description:crm.field_crm_lead2opportunity_partner_partner_id
+#: model:ir.model.fields,field_description:crm.field_crm_lead2projectissue_wizard_partner_id
 #: model:ir.model.fields,field_description:crm.field_crm_lead_partner_id
 #: model:ir.model.fields,field_description:crm.field_crm_partner_binding_partner_id
 #: model:ir.ui.view,arch_db:crm.crm_case_form_view_leads
@@ -1934,6 +1934,7 @@ msgstr "Брошур, барааны хуудас, танилцуулга зэр
 #. module: crm
 #: selection:crm.lead2opportunity.partner,action:0
 #: selection:crm.lead2opportunity.partner.mass,action:0
+#: selection:crm.lead2projectissue.wizard,action:0
 #: selection:crm.partner.binding,action:0
 msgid "Do not link to a customer"
 msgstr "Захиалагчтай битгий холбо"
@@ -2585,12 +2586,7 @@ msgid "Last Updated on"
 msgstr "Сүүлийн засвар хийсэн огноо"
 
 #. module: crm
-#: model:ir.model.fields,field_description:crm.field_res_users_calendar_last_notif_ack
-msgid "Last notification marked as read from base Calendar"
-msgstr "Суурь цаглабараас сүүлийн мэдэгдэл уншигдсан гэж тэмдэглэгдсэн"
-
-#. module: crm
-#: code:addons/crm/models/crm_lead.py:841
+#: code:addons/crm/models/crm_lead.py:837
 #: selection:crm.activity.report,lead_type:0 selection:crm.lead,type:0
 #: selection:crm.opportunity.report,type:0
 #: model:ir.model.fields,field_description:crm.field_crm_activity_log_lead_id
@@ -2764,6 +2760,7 @@ msgstr "Мөрүүд"
 
 #. module: crm
 #: selection:crm.lead2opportunity.partner,action:0
+#: selection:crm.lead2projectissue.wizard,action:0
 #: selection:crm.partner.binding,action:0
 msgid "Link to an existing customer"
 msgstr "Байгаа захиалагчид холбох"
@@ -3489,6 +3486,11 @@ msgid "Overdue Activities"
 msgstr "Хугацаа нь хэтэрсэн ажилбарууд"
 
 #. module: crm
+#: model:ir.ui.view,arch_db:crm.view_crm_case_opportunities_filter
+msgid "Overdue Opportunities"
+msgstr "Хугацаа хэтэрсэн Боломжууд"
+
+#. module: crm
 #: model:ir.model.fields,field_description:crm.field_crm_opportunity_report_delay_expected
 msgid "Overpassed Deadline"
 msgstr "Товлосон Хугацаа хэтэрсэн"
@@ -3844,6 +3846,7 @@ msgstr "Хамаарагчаар"
 #. module: crm
 #: model:ir.model.fields,field_description:crm.field_crm_lead2opportunity_partner_action
 #: model:ir.model.fields,field_description:crm.field_crm_lead2opportunity_partner_mass_action
+#: model:ir.model.fields,field_description:crm.field_crm_lead2projectissue_wizard_action
 #: model:ir.model.fields,field_description:crm.field_crm_partner_binding_action
 msgid "Related Customer"
 msgstr "Холбогдох захиалагч"
@@ -4111,6 +4114,15 @@ msgstr ""
 #: model:ir.ui.view,arch_db:crm.view_crm_case_opportunities_filter
 msgid "Show all opportunities for which the next action date is before today"
 msgstr "Өнөөдрөөс өмнө дараагийн арга хэмжээг товлосон бүх боломжийг харуулах"
+
+#. module: crm
+#: model:ir.ui.view,arch_db:crm.view_crm_case_opportunities_filter
+msgid ""
+"Show all opportunities with a deadline for which the next action date is "
+"before today"
+msgstr ""
+"Өнөөдрөөс өмнө дараагийн үйлдлийг товлосон эцсийн хугацаатай бүх боломжийг "
+"харуулах"
 
 #. module: crm
 #: model:ir.ui.view,arch_db:crm.crm_activity_report_view_search
@@ -4505,12 +4517,8 @@ msgstr ""
 
 #. module: crm
 #: model:ir.actions.act_window,help:crm.crm_opportunity_report_action_lead
-msgid ""
-"This report analyses the source of your leads\n"
-"(including those converted into opportunities)."
-msgstr ""
-"Энэ тайлан нь таны сэжимийн сурвалжийн шинжилгээ\n"
-"(боломж руу хөрвүүлөгдсэн нь мөн хамаарна)."
+msgid "This report analyses the source of your leads."
+msgstr "Энэ тайлан нь сэжмүүдийн эхийг шинжилдэг."
 
 #. module: crm
 #: model:ir.model.fields,help:crm.field_crm_stage_fold

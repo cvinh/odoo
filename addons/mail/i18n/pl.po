@@ -11,8 +11,8 @@
 # Wojtek Warczakowski <w.warczakowski@gmail.com>, 2016
 # Grzegorz Grzelak <grzegorz.grzelak@openglobe.pl>, 2016
 # Jaroslaw Kaczmarski <jarek.pl@gmail.com>, 2016
-# Grażyna Grzelak <grazyna.grzelak@openglobe.pl>, 2016
 # zbik2607 <darek@krokus.com.pl>, 2016
+# Grażyna Grzelak <grazyna.grzelak@openglobe.pl>, 2016
 # Zdzisław Krajewski <zdzichucb@gmail.com>, 2016
 # Maciej Wichowski <maciej.wichowski@openglobe.pl>, 2016
 # zieloo <zieloo@gmail.com>, 2016
@@ -725,7 +725,7 @@ msgstr "Anulowano"
 #. module: mail
 #: selection:mail.shortcode,shortcode_type:0
 msgid "Canned Response"
-msgstr "odpowiedź anulowano"
+msgstr "Odpowiedź anulowano"
 
 #. module: mail
 #: model:ir.model,name:mail.model_mail_shortcode
@@ -1100,7 +1100,7 @@ msgstr "Data ostatniej wiadomości w rekordzie."
 #. module: mail
 #: model:ir.ui.view,arch_db:mail.message_user_assigned
 msgid "Dear"
-msgstr ""
+msgstr "Szanowny"
 
 #. module: mail
 #: model:ir.model.fields,field_description:mail.field_mail_message_subtype_default
@@ -4701,7 +4701,7 @@ msgstr "ogólne"
 #. module: mail
 #: model:ir.ui.view,arch_db:mail.message_origin_link
 msgid "has been"
-msgstr ""
+msgstr "został"
 
 #. module: mail
 #: model:ir.model,name:mail.model_ir_actions_server

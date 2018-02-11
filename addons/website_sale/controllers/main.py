@@ -128,16 +128,17 @@ class WebsiteSale(http.Controller):
            (variant id, [visible attribute ids], variant price, variant sale price)
         """
         # product attributes with at least two choices
-        product = product.with_context(quantity=1)
+        quantity = product._context.get('quantity') or 1
+        product = product.with_context(quantity=quantity)
 
         visible_attrs_ids = product.attribute_line_ids.filtered(lambda l: len(l.value_ids) > 1).mapped('attribute_id').ids
         to_currency = request.website.get_current_pricelist().currency_id
         attribute_value_ids = []
         for variant in product.product_variant_ids:
             if to_currency != product.currency_id:
-                price = variant.currency_id.compute(variant.website_public_price, to_currency)
+                price = variant.currency_id.compute(variant.website_public_price, to_currency) / quantity
             else:
-                price = variant.website_public_price
+                price = variant.website_public_price / quantity
             visible_attribute_ids = [v.id for v in variant.attribute_value_ids if v.attribute_id.id in visible_attrs_ids]
             attribute_value_ids.append([variant.id, visible_attribute_ids, variant.website_price, price])
         return attribute_value_ids
@@ -268,7 +269,9 @@ class WebsiteSale(http.Controller):
 
     @http.route(['/shop/product/<model("product.template"):product>'], type='http', auth="public", website=True)
     def product(self, product, category='', search='', **kwargs):
-        product_context = dict(request.env.context, active_id=product.id)
+        product_context = dict(request.env.context,
+                               active_id=product.id,
+                               partner=request.env.user.partner_id)
         ProductCategory = request.env['product.public.category']
         Rating = request.env['rating.rating']
 
@@ -354,7 +357,8 @@ class WebsiteSale(http.Controller):
             values['suggested_products'] = _order._cart_accessories()
 
         if post.get('type') == 'popover':
-            return request.render("website_sale.cart_popover", values)
+            # force no-cache so IE11 doesn't cache this XHR
+            return request.render("website_sale.cart_popover", values, headers={'Cache-Control': 'no-cache'})
 
         if post.get('code_not_available'):
             values['code_not_available'] = post.get('code_not_available')
@@ -365,8 +369,8 @@ class WebsiteSale(http.Controller):
     def cart_update(self, product_id, add_qty=1, set_qty=0, **kw):
         request.website.sale_get_order(force_create=1)._cart_update(
             product_id=int(product_id),
-            add_qty=float(add_qty),
-            set_qty=float(set_qty),
+            add_qty=add_qty,
+            set_qty=set_qty,
             attributes=self._filter_attributes(**kw),
         )
         return request.redirect("/shop/cart")
@@ -380,7 +384,6 @@ class WebsiteSale(http.Controller):
         if order.state != 'draft':
             request.website.sale_reset()
             return {}
-
         value = order._cart_update(product_id=product_id, line_id=line_id, add_qty=add_qty, set_qty=set_qty)
         if not order.cart_quantity:
             request.website.sale_reset()
@@ -422,7 +425,7 @@ class WebsiteSale(http.Controller):
             Partner = order.partner_id.with_context(show_address=1).sudo()
             shippings = Partner.search([
                 ("id", "child_of", order.partner_id.commercial_partner_id.ids),
-                '|', ("type", "=", "delivery"), ("id", "=", order.partner_id.commercial_partner_id.id)
+                '|', ("type", "in", ["delivery", "other"]), ("id", "=", order.partner_id.commercial_partner_id.id)
             ], order='id desc')
             if shippings:
                 if kw.get('partner_id') or 'use_billing' in kw:
@@ -479,6 +482,8 @@ class WebsiteSale(http.Controller):
         # vat validation
         Partner = request.env['res.partner']
         if data.get("vat") and hasattr(Partner, "check_vat"):
+            if data.get("country_id"):
+                data["vat"] = Partner.fix_eu_vat_number(data.get("country_id"), data.get("vat"))
             check_func = request.website.company_id.vat_check_vies and Partner.vies_vat_check or Partner.simple_vat_check
             vat_country, vat_number = Partner._split_vat(data.get("vat"))
             if not check_func(vat_country, vat_number):
@@ -492,7 +497,7 @@ class WebsiteSale(http.Controller):
     def _checkout_form_save(self, mode, checkout, all_values):
         Partner = request.env['res.partner']
         if mode[0] == 'new':
-            partner_id = Partner.sudo().create(checkout)
+            partner_id = Partner.sudo().create(checkout).id
         elif mode[0] == 'edit':
             partner_id = int(all_values.get('partner_id', 0))
             if partner_id:
